@@ -61,19 +61,23 @@ def format_exif_result(data):
     return txt
 
 def format_email_result(data):
-    if "error" in data: return "❌ Email inválido."
+    if "error" in data: return "❌ Email inválido o formato incorrecto."
     
-    mx_str = ", ".join(data['mx_records']) if data['mx_records'] else "Sin registros"
+    mx_str = "\n  └ " + "\n  └ ".join(data['mx_records']) if data['mx_records'] else "Sin registros MX"
     
     return (
         f"{render_header('EMAIL INTEL')}"
-        f"📧 <b>Email:</b> <code>{data['email']}</code>\n"
+        f"📧 <b>Target:</b> <code>{data['email']}</code>\n"
+        f"🏢 <b>Proveedor:</b> {data.get('provider', 'N/A')}\n"
         f"⚖️ <b>Reputación:</b> {data['reputation']}\n"
-        f"🚨 <b>Sospechoso:</b> {'SI' if data['suspicious'] else 'NO'}\n"
+        f"🗑️ <b>Desechable:</b> {'SI ⚠️' if data['disposable'] else 'NO'}\n"
+        f"🚨 <b>Sospechoso:</b> {'SI 🔴' if data['suspicious'] else 'NO 🟢'}\n"
         f"🔓 <b>Filtrado:</b> {'SI ⚠️' if data['leaked'] else 'NO'}\n\n"
-        f"⚙️ <b>Datos Técnicos:</b>\n"
+        f"⚙️ <b>Infraestructura DNS:</b>\n"
         f"• Dominio: {data['domain']}\n"
-        f"• MX: {mx_str}\n"
-        f"• Desechable: {'SI' if data['disposable'] else 'NO'}\n\n"
-        f"🔍 <a href='{data['links']['haveibeenpwned']}'>Verificar Brechas</a>"
+        f"• MX Records: {mx_str}\n\n"
+        f"🔗 <b>Fuentes de Brechas:</b>\n"
+        f"• <a href='{data['links']['haveibeenpwned']}'>HaveIBeenPwned</a>\n"
+        f"• <a href='{data['links']['intelx']}'>IntelligenceX</a>\n"
+        f"• <a href='{data['links']['dehashed']}'>DeHashed</a>"
     )
