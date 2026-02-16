@@ -2,7 +2,10 @@
 from telegram import Update
 from telegram.ext import ContextTypes
 from ui.menus import main_menu, back_btn
-from ui.templates import format_ip_result, format_phone_result, format_username_result, format_email_result
+from ui.templates import (
+    format_ip_result, format_phone_result, format_username_result, 
+    format_email_result, format_exif_result
+)
 from modules.ip_lookup import get_ip_info
 from modules.phone_lookup import analyze_phone
 from modules.username_search import search_username
@@ -117,23 +120,9 @@ async def document_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         byte_array = await f.download_as_bytearray()
         
         data = get_exif(bytes(byte_array))
-        
-        if not data:
-            await msg.edit_text("❌ No se encontraron metadatos EXIF.", reply_markup=back_btn())
-            return
-
-        # Formatear respuesta EXIF aquí directamente por simplicidad
-        txt = "📂 <b>METADATOS ENCONTRADOS</b>\n\n"
-        txt += f"📷 <b>Dispositivo:</b> {data['device'].get('Model', 'N/A')}\n"
-        txt += f"📅 <b>Fecha:</b> {data['device'].get('DateTimeOriginal', 'N/A')}\n"
-        
-        if "coords" in data:
-            txt += f"\n📍 <b>GPS Detectado!</b>\n"
-            txt += f"🔗 <a href='{data['map']}'>Ver Ubicación</a>\n"
-        else:
-            txt += "\n⚠️ Sin datos GPS.\n"
+        response = format_exif_result(data)
             
-        await msg.edit_text(txt, parse_mode='HTML', reply_markup=back_btn())
+        await msg.edit_text(response, parse_mode='HTML', reply_markup=back_btn())
         
     except Exception as e:
         await msg.edit_text(f"❌ Error procesando imagen: {e}", reply_markup=back_btn())

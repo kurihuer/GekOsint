@@ -43,6 +43,23 @@ def format_username_result(username, found):
         
     return txt
 
+def format_exif_result(data):
+    if not data or "error" in data:
+        return "❌ No se encontraron metadatos EXIF o el archivo es inválido."
+    
+    txt = render_header("EXIF DATA")
+    txt += f"📷 <b>Dispositivo:</b> {data['device'].get('Model', 'N/A')}\n"
+    txt += f"📅 <b>Fecha:</b> {data['device'].get('DateTimeOriginal', 'N/A')}\n"
+    txt += f"🖼 <b>Resolución:</b> {data['basic'].get('Size', 'N/A')}\n"
+    
+    if "coords" in data:
+        txt += f"\n📍 <b>GPS Detectado!</b>\n"
+        txt += f"🔗 <a href='{data['map']}'>Ver Ubicación en Google Maps</a>\n"
+    else:
+        txt += "\n⚠️ Sin datos GPS.\n"
+        
+    return txt
+
 def format_email_result(data):
     if "error" in data: return "❌ Email inválido."
     
