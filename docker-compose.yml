@@ -1,0 +1,12 @@
+
+version: '3.8'
+
+services:
+  gekosint:
+    build: .
+    container_name: gekosint_bot
+    restart: always
+    volumes:
+      - ./pages:/app/pages
+    env_file:
+      - .env
