@@ -11,6 +11,7 @@
 - **Deployment**: Dockerized (Alpine based)
 
 ## Key Conventions
+- **Python Compatibility**: Soporte para Python 3.14+ usando `asyncio.run()` y contextos asíncronos explícitos para evitar errores de `RuntimeError: There is no current event loop`.
 - **UI Style**: "Cybersec Dashboard" (Bold headers, emojis, clean lines)
 - **Concurrency**: `concurrent.futures` for multi-site lookups (Username search)
 - **Tracking**: HTML pages generated in `pages/`, deployed via free APIs (Netlify/File.io/Uguu)
