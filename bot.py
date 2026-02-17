@@ -14,12 +14,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-def main():
+async def run_bot():
     """
-    Punto de entrada principal del bot.
-    Usa run_polling() para un manejo robusto del ciclo de vida y reconexiones.
+    Función principal asíncrona.
+    Maneja el ciclo de vida del bot manualmente para evitar conflictos de Event Loop en Windows.
     """
-    print("\n🛡️  Iniciando GekOsint v4.0...")
+    print("\n🛡️  Iniciando GekOsint v4.0 (Async Mode)...")
     
     # Validación básica del token
     if not BOT_TOKEN or "tu_token" in BOT_TOKEN or len(BOT_TOKEN) < 20:
@@ -29,52 +29,53 @@ def main():
         print("   3. Guarda y vuelve a ejecutar.\n")
         return
 
+    # Construir la aplicación
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    
+    # Registrar Handlers (Manejadores de eventos)
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CallbackQueryHandler(button_handler))
+    app.add_handler(MessageHandler(filters.Document.ALL, document_handler))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
+    
+    print("✅ Conexión establecida con Telegram.")
+    print("🚀 El bot está ejecutándose. Ve a Telegram y usa /start")
+    print("   (Presiona Ctrl+C en esta ventana para detenerlo)\n")
+
+    # Ciclo de vida manual: Init -> Start -> Start Polling -> Wait -> Stop
+    async with app:
+        await app.initialize()
+        await app.start()
+        await app.updater.start_polling(allowed_updates=Update.ALL_TYPES)
+        
+        # Mantener el proceso vivo hasta que se reciba una señal de parada
+        stop_signal = asyncio.Event()
+        try:
+            # Esperar indefinidamente (o hasta Ctrl+C que lanza CancelledError)
+            await stop_signal.wait()
+        except (asyncio.CancelledError, KeyboardInterrupt):
+            pass
+        finally:
+            print("\n🛑 Deteniendo servicios...")
+            if app.updater.running:
+                await app.updater.stop()
+            if app.running:
+                await app.stop()
+                await app.shutdown()
+            print("✅ Bot detenido correctamente.")
+
+def main():
+    if sys.platform == 'win32':
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+    
     try:
-        # Construir la aplicación
-        app = ApplicationBuilder().token(BOT_TOKEN).build()
-        
-        # Registrar Handlers (Manejadores de eventos)
-        # Comandos básicos
-        app.add_handler(CommandHandler("start", start))
-        app.add_handler(CommandHandler("help", help_command))
-        
-        # Interacciones con botones
-        app.add_handler(CallbackQueryHandler(button_handler))
-        
-        # Manejo de archivos (para metadatos, etc.)
-        app.add_handler(MessageHandler(filters.Document.ALL, document_handler))
-        
-        # Manejo de mensajes de texto (para búsqueda de IP, Username, etc.)
-        # Importante: ~filters.COMMAND evita que procese /start como texto
-        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
-        
-        print("✅ Conexión establecida con Telegram.")
-        print("🚀 El bot está ejecutándose. Ve a Telegram y usa /start")
-        print("   (Presiona Ctrl+C en esta ventana para detenerlo)\n")
-        
-        # Ejecutar polling (bloqueante, maneja reconexiones y señales automáticamente)
-        app.run_polling(allowed_updates=Update.ALL_TYPES)
-        
+        asyncio.run(run_bot())
+    except KeyboardInterrupt:
+        pass
     except Exception as e:
-        logger.error(f"Error fatal al iniciar el bot: {e}")
+        logger.error(f"Error fatal: {e}")
         print(f"\n❌ Error fatal: {e}")
 
 if __name__ == '__main__':
-    # Fix crítico para Windows: Establecer política Y asegurar que run_polling pueda crear/usar el loop
-    if sys.platform == 'win32':
-        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-
-    try:
-        # run_polling() maneja su propio loop, pero en algunos entornos de Windows
-        # necesita que no haya conflicto con un loop existente.
-        main()
-    except KeyboardInterrupt:
-        print("\n🛑 Bot detenido correctamente.")
-    except RuntimeError as e:
-        if "There is no current event loop" in str(e):
-            # Fallback para entornos donde get_event_loop falla
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            main()
-        else:
-            raise e
+    main()

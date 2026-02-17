@@ -15,7 +15,7 @@
 - **UI Style**: "Cybersec Dashboard" (Bold headers, emojis, clean lines)
 - **Concurrency**: `concurrent.futures` for multi-site lookups (Username search)
 - **Async I/O**: `httpx` is used for external API calls (Tracking deployment) and `requests` for some synchronous utilities. Ensure `httpx` is in `requirements.txt`.
-- **Bot Loop**: Uses `Application.run_polling()` for robust lifecycle management.
+- **Bot Loop**: Uses `asyncio.run(run_bot())` with manual lifecycle management (`app.initialize()`, `app.start()`, `app.updater.start_polling()`) to ensure Windows compatibility and prevent "No current event loop" errors.
 - **Tracking**: HTML pages generated in `pages/`, deployed via free APIs (Catbox [Primary], 0x0.st, File.io). Multiple fallbacks ensure reliability.
 - **Env Vars**: managed via `config.py` and `.env`
 
