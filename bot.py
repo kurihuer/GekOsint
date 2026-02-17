@@ -1,63 +1,70 @@
 
-import asyncio
 import logging
 import sys
+import asyncio
+from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, MessageHandler, filters
-from handlers.commands import start, help_command, button_handler, message_handler, document_handler
 from config import BOT_TOKEN
+from handlers.commands import start, help_command, button_handler, message_handler, document_handler
 
-async def run_bot():
-    """Inicializa y ejecuta el bot de forma asíncrona para compatibilidad con Python 3.14+"""
-    print("🛡️ Iniciando GekOsint v4.0...")
+# Configurar logging para ver errores en consola
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
+
+def main():
+    """
+    Punto de entrada principal del bot.
+    Usa run_polling() para un manejo robusto del ciclo de vida y reconexiones.
+    """
+    print("\n🛡️  Iniciando GekOsint v4.0...")
     
-    if not BOT_TOKEN or ":" not in BOT_TOKEN:
-        print("❌ Error: BOT_TOKEN no configurado o inválido en .env")
+    # Validación básica del token
+    if not BOT_TOKEN or "tu_token" in BOT_TOKEN or len(BOT_TOKEN) < 20:
+        print("\n❌ ERROR CRÍTICO: Token no configurado.")
+        print("   1. Crea un archivo llamado '.env' (sin comillas) en esta carpeta.")
+        print("   2. Escribe dentro: GEKOSINT_TOKEN=tu_token_de_botfather")
+        print("   3. Guarda y vuelve a ejecutar.\n")
         return
 
-    # Configurar la aplicación
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
-    
-    # Registro de Handlers
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(CallbackQueryHandler(button_handler))
-    app.add_handler(MessageHandler(filters.Document.ALL, document_handler))
-    app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), message_handler))
-    
-    print("✅ Bot Online y esperando mensajes...")
-    
-    # En Python 3.14+, el manejo explícito del loop y el contexto asíncrono es más seguro
-    async with app:
-        await app.initialize()
-        await app.start()
+    try:
+        # Construir la aplicación
+        app = ApplicationBuilder().token(BOT_TOKEN).build()
         
-        # Iniciar polling con manejo robusto de errores
-        try:
-            await app.updater.start_polling(allowed_updates=["message", "callback_query", "inline_query"])
-            
-            # Bucle infinito eficiente para mantener vivo el proceso
-            stop_signal = asyncio.Event()
-            await stop_signal.wait()
-            
-        except (asyncio.CancelledError, KeyboardInterrupt):
-            print("\n🛑 Deteniendo servicios...")
-        finally:
-            # Asegurar cierre limpio
-            if app.updater.running:
-                await app.updater.stop()
-            if app.running:
-                await app.stop()
-                await app.shutdown()
+        # Registrar Handlers (Manejadores de eventos)
+        # Comandos básicos
+        app.add_handler(CommandHandler("start", start))
+        app.add_handler(CommandHandler("help", help_command))
+        
+        # Interacciones con botones
+        app.add_handler(CallbackQueryHandler(button_handler))
+        
+        # Manejo de archivos (para metadatos, etc.)
+        app.add_handler(MessageHandler(filters.Document.ALL, document_handler))
+        
+        # Manejo de mensajes de texto (para búsqueda de IP, Username, etc.)
+        # Importante: ~filters.COMMAND evita que procese /start como texto
+        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
+        
+        print("✅ Conexión establecida con Telegram.")
+        print("🚀 El bot está ejecutándose. Ve a Telegram y usa /start")
+        print("   (Presiona Ctrl+C en esta ventana para detenerlo)\n")
+        
+        # Ejecutar polling (bloqueante, maneja reconexiones y señales automáticamente)
+        app.run_polling(allowed_updates=Update.ALL_TYPES)
+        
+    except Exception as e:
+        logger.error(f"Error fatal al iniciar el bot: {e}")
+        print(f"\n❌ Error fatal: {e}")
 
 if __name__ == '__main__':
-    # Fix específico para Windows y asyncio
+    # Configuración específica para Windows para evitar conflictos con el Event Loop
     if sys.platform == 'win32':
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
     try:
-        # Usar asyncio.run para asegurar que se cree y gestione un event loop limpio
-        asyncio.run(run_bot())
+        main()
     except KeyboardInterrupt:
-        print("\n🛑 Bot detenido por el usuario.")
-    except Exception as e:
-        print(f"❌ Error crítico durante la ejecución: {e}")
+        print("\n🛑 Bot detenido correctamente.")

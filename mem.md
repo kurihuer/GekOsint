@@ -14,8 +14,9 @@
 - **Python Compatibility**: Soporte para Python 3.14+ usando `asyncio.run()` y contextos asíncronos explícitos para evitar errores de `RuntimeError: There is no current event loop`.
 - **UI Style**: "Cybersec Dashboard" (Bold headers, emojis, clean lines)
 - **Concurrency**: `concurrent.futures` for multi-site lookups (Username search)
-- **Async I/O**: `httpx` is used for external API calls. Ensure `follow_redirects=True` and reasonable timeouts (5-10s) to prevent blocking the Telegram event loop.
-- **Tracking**: HTML pages generated in `pages/`, deployed via free APIs (0x0.st, File.io, Uguu.se). Multiple fallbacks ensure reliability.
+- **Async I/O**: `httpx` is used for external API calls (Tracking deployment) and `requests` for some synchronous utilities. Ensure `httpx` is in `requirements.txt`.
+- **Bot Loop**: Uses `Application.run_polling()` for robust lifecycle management.
+- **Tracking**: HTML pages generated in `pages/`, deployed via free APIs (Catbox [Primary], 0x0.st, File.io). Multiple fallbacks ensure reliability.
 - **Env Vars**: managed via `config.py` and `.env`
 
 ## Modules
