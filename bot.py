@@ -60,11 +60,21 @@ def main():
         print(f"\n❌ Error fatal: {e}")
 
 if __name__ == '__main__':
-    # Configuración específica para Windows para evitar conflictos con el Event Loop
+    # Fix crítico para Windows: Establecer política Y asegurar que run_polling pueda crear/usar el loop
     if sys.platform == 'win32':
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
     try:
+        # run_polling() maneja su propio loop, pero en algunos entornos de Windows
+        # necesita que no haya conflicto con un loop existente.
         main()
     except KeyboardInterrupt:
         print("\n🛑 Bot detenido correctamente.")
+    except RuntimeError as e:
+        if "There is no current event loop" in str(e):
+            # Fallback para entornos donde get_event_loop falla
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            main()
+        else:
+            raise e
