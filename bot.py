@@ -30,17 +30,30 @@ async def run_bot():
     async with app:
         await app.initialize()
         await app.start()
-        await app.updater.start_polling()
         
-        # Mantener la ejecución activa
+        # Iniciar polling con manejo robusto de errores
         try:
-            while True:
-                await asyncio.sleep(3600)
-        except asyncio.CancelledError:
-            await app.stop()
-            await app.shutdown()
+            await app.updater.start_polling(allowed_updates=["message", "callback_query", "inline_query"])
+            
+            # Bucle infinito eficiente para mantener vivo el proceso
+            stop_signal = asyncio.Event()
+            await stop_signal.wait()
+            
+        except (asyncio.CancelledError, KeyboardInterrupt):
+            print("\n🛑 Deteniendo servicios...")
+        finally:
+            # Asegurar cierre limpio
+            if app.updater.running:
+                await app.updater.stop()
+            if app.running:
+                await app.stop()
+                await app.shutdown()
 
 if __name__ == '__main__':
+    # Fix específico para Windows y asyncio
+    if sys.platform == 'win32':
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
     try:
         # Usar asyncio.run para asegurar que se cree y gestione un event loop limpio
         asyncio.run(run_bot())
