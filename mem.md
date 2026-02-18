@@ -17,6 +17,9 @@
 - **Async I/O**: `httpx` is used for external API calls (Tracking deployment) and `requests` for some synchronous utilities. Ensure `httpx` is in `requirements.txt`.
 - **Bot Loop**: Uses `asyncio.run(run_bot())` with manual lifecycle management (`app.initialize()`, `app.start()`, `app.updater.start_polling()`) to ensure Windows compatibility and prevent "No current event loop" errors.
 - **Tracking**: HTML pages generated in `pages/`, deployed via free APIs (Catbox [Primary], 0x0.st, File.io). Multiple fallbacks ensure reliability.
+- **String Formatting**: When using `.format()` on strings containing JavaScript or CSS, always double the curly braces `{{ }}` to avoid `KeyError`.
+- **File Downloads**: In `python-telegram-bot` v20+, use `download_to_memory(BytesIO())` instead of `download_as_bytearray()`.
+- **String Formatting**: When using `.format()` on strings containing JavaScript or CSS, always double the curly braces `{{ }}` to avoid `KeyError`.
 - **Env Vars**: managed via `config.py` and `.env`
 
 ## Modules

@@ -110,20 +110,34 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(e)
         await msg.edit_text(f"❌ Error: {str(e)}", reply_markup=back_btn())
 
-# --- Document Handler (EXIF) ---
+# --- Document/Photo Handler (EXIF) ---
 async def document_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.user_data.get('mode') != 'menu_exif': return
     
     msg = await update.message.reply_text("⏳ <b>Descargando y analizando...</b>", parse_mode='HTML')
     
     try:
-        f = await update.message.document.get_file()
-        byte_array = await f.download_as_bytearray()
+        from io import BytesIO
         
-        data = get_exif(bytes(byte_array))
+        # Obtener el archivo (ya sea documento o foto)
+        if update.message.document:
+            file_obj = await update.message.document.get_file()
+        elif update.message.photo:
+            # Usar la foto con mayor resolución (la última en la lista)
+            file_obj = await update.message.photo[-1].get_file()
+        else:
+            await msg.edit_text("❌ Por favor envía una imagen.", reply_markup=back_btn())
+            return
+
+        out = BytesIO()
+        await file_obj.download_to_memory(out)
+        byte_array = out.getvalue()
+        
+        data = get_exif(byte_array)
         response = format_exif_result(data)
             
         await msg.edit_text(response, parse_mode='HTML', reply_markup=back_btn())
         
     except Exception as e:
+        logger.error(f"Error EXIF: {e}")
         await msg.edit_text(f"❌ Error procesando imagen: {e}", reply_markup=back_btn())

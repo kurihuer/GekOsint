@@ -36,7 +36,8 @@ async def run_bot():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CallbackQueryHandler(button_handler))
-    app.add_handler(MessageHandler(filters.Document.ALL, document_handler))
+    # Manejar tanto documentos como fotos para EXIF
+    app.add_handler(MessageHandler(filters.Document.IMAGE | filters.PHOTO, document_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
     
     print("✅ Conexión establecida con Telegram.")
