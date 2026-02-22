@@ -1,0 +1,36 @@
+# Variables de entorno (TOKENS Y SECRETOS)
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.venv/
+venv/
+env/
+
+# Archivos generados de tracking
+pages/*.html
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+Desktop.ini
+Thumbs.db
+.DS_Store
+
+# Archivos de test/deploy temporales
+test_*.py
+fix_*.py
+deploy_result.txt
+
+# Logs
+*.log
+
+# Archivos de memoria del proyecto
+mem.md
