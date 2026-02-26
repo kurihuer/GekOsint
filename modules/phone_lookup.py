@@ -23,12 +23,11 @@ def get_location_from_country(country_code):
         logger.warning(f"Error ubicación país: {e}")
     return None
 
-def get_phone_validation_details(number, country_code):
+def get_phone_validation_details(number, country_code, carrier_name=""):
     details = {"possible_fraud": False, "is_ported": False, "line_status": "Activa (Estimado)"}
     try:
-        if country_code == "MX":
-            if len(str(number).replace("+", "").replace(" ", "")) == 12:
-                details["is_ported"] = True
+        if not carrier_name or carrier_name.strip() == "":
+            details["is_ported"] = True
         first_digit = str(number).replace("+", "").replace(" ", "")[2:3] if len(str(number)) > 3 else ""
         if first_digit in ["0", "1"]:
             details["possible_fraud"] = True
@@ -154,7 +153,7 @@ def analyze_phone(number):
         national_digits = re.sub(r'\D', '', national)
 
         location_data = get_location_from_country(country_code_alpha)
-        validation    = get_phone_validation_details(e164, country_code_alpha)
+        validation    = get_phone_validation_details(e164, country_code_alpha, carrier_name or "")
         truecaller    = get_truecaller_data(national_digits, country_code_alpha)
 
         result = {

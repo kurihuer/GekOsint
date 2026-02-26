@@ -189,6 +189,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             response = format_whatsapp_result(data)
 
         await msg.edit_text(response, parse_mode='HTML', disable_web_page_preview=True, reply_markup=back_btn())
+        context.user_data.pop('mode', None)
         
     except Exception as e:
         logger.error(f"Error en handler: {e}")
