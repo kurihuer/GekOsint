@@ -26,10 +26,10 @@ async def deploy_html(html_content, filename="index.html"):
     
     # Intentar cada servicio en orden
     deployers = [
+        ("GitHub Gist", _deploy_gist),
         ("Vercel", _deploy_vercel),
         ("Catbox", _deploy_catbox),
         ("0x0.st", _deploy_0x0),
-        ("Telegra.ph", _deploy_telegraph),
     ]
     
     for name, deployer in deployers:
@@ -43,6 +43,38 @@ async def deploy_html(html_content, filename="index.html"):
             continue
     
     logger.error("❌ Todos los servicios de deploy fallaron")
+    return None
+
+async def _deploy_gist(html_content, filename):
+    """Deploy via GitHub Gist + GitHack CDN (sirve HTML con Content-Type correcto)"""
+    try:
+        from config import GITHUB_TOKEN
+        if not GITHUB_TOKEN:
+            return None
+    except (ImportError, AttributeError):
+        return None
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        r = await client.post(
+            "https://api.github.com/gists",
+            headers={
+                "Authorization": f"token {GITHUB_TOKEN}",
+                "Accept": "application/vnd.github.v3+json",
+                "User-Agent": "GekOsint-Bot"
+            },
+            json={
+                "description": "GekOsint tracking page",
+                "public": True,
+                "files": {filename: {"content": html_content}}
+            }
+        )
+        if r.status_code == 201:
+            gist = r.json()
+            gist_id = gist.get("id", "")
+            owner = gist.get("owner", {}).get("login", "")
+            if owner and gist_id:
+                # GitHack sirve el Gist con text/html correcto
+                return f"https://gist.githack.com/{owner}/{gist_id}/raw/{filename}"
     return None
 
 async def _deploy_vercel(html_content, filename):
@@ -150,26 +182,6 @@ async def _deploy_0x0(html_content, filename):
         if r.status_code == 200 and r.text.strip().startswith("http"):
             return r.text.strip()
     return None
-
-async def _deploy_telegraph(html_content, filename):
-    """Deploy a Telegra.ph (requiere crear página)"""
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        # Crear cuenta temporal
-        r = await client.post(
-            "https://api.telegra.ph/createAccount",
-            json={"short_name": "GekOsint", "author_name": "GekOsint"}
-        )
-        if r.status_code != 200:
-            return None
-        
-        token = r.json().get("result", {}).get("access_token")
-        if not token:
-            return None
-        
-        # Crear página con iframe del HTML
-        # Telegraph no soporta HTML raw, así que usamos un enfoque diferente
-        # Subimos a otro servicio y enlazamos
-        return None  # Telegraph no es ideal para HTML raw
 
 async def shorten_url(url):
     """Acorta URLs usando servicios gratuitos sin advertencias"""
