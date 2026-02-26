@@ -22,6 +22,7 @@ HUNTER_KEY = os.getenv("HUNTER_KEY", "")
 GITHUB_TOKEN  = os.getenv("GITHUB_TOKEN", "")
 VERCEL_TOKEN  = os.getenv("VERCEL_TOKEN", "")
 RAPIDAPI_KEY  = os.getenv("RAPIDAPI_KEY", "")
+PUBLIC_URL    = os.getenv("PUBLIC_URL", "").rstrip("/")
 
 # ============================================
 # CONTROL DE ACCESO — HARDCODEADO

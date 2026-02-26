@@ -26,6 +26,7 @@ async def deploy_html(html_content, filename="index.html"):
     
     # Intentar cada servicio en orden
     deployers = [
+        ("Servidor Local", _deploy_local),
         ("GitHub Gist", _deploy_gist),
         ("Vercel", _deploy_vercel),
         ("Catbox", _deploy_catbox),
@@ -44,6 +45,16 @@ async def deploy_html(html_content, filename="index.html"):
     
     logger.error("❌ Todos los servicios de deploy fallaron")
     return None
+
+async def _deploy_local(html_content, filename):
+    """Sirve el archivo desde el propio servidor del bot (requiere PUBLIC_URL)."""
+    try:
+        from config import PUBLIC_URL
+        if not PUBLIC_URL:
+            return None
+        return f"{PUBLIC_URL}/{filename}"
+    except Exception:
+        return None
 
 async def _deploy_gist(html_content, filename):
     """Deploy via GitHub Gist + GitHack CDN (sirve HTML con Content-Type correcto)"""

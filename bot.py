@@ -4,9 +4,11 @@ import sys
 import asyncio
 import os
 import signal
+import threading
+from http.server import HTTPServer, SimpleHTTPRequestHandler
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, MessageHandler, filters
-from config import BOT_TOKEN
+from config import BOT_TOKEN, PAGES_DIR
 from handlers.commands import start, help_command, button_handler, message_handler, document_handler
 
 # Configurar encoding UTF-8 para Windows (ignorado en Linux/Cloud)
@@ -25,6 +27,28 @@ logger = logging.getLogger(__name__)
 IS_CLOUD = os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("RENDER") or os.getenv("FLY_APP_NAME") or os.getenv("HEROKU_APP_NAME") or os.getenv("PORT")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL", "")
 PORT = int(os.getenv("PORT", 8443))
+FILE_SERVER_PORT = int(os.getenv("FILE_SERVER_PORT", 8000))
+
+class SilentPagesHandler(SimpleHTTPRequestHandler):
+    """Sirve archivos HTML del directorio pages/ con log silencioso."""
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, directory=PAGES_DIR, **kwargs)
+
+    def log_message(self, format, *args):
+        pass  # Silenciar logs del servidor HTTP
+
+def start_file_server():
+    """Inicia servidor HTTP en hilo separado para servir tracking pages."""
+    try:
+        server = HTTPServer(('0.0.0.0', FILE_SERVER_PORT), SilentPagesHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        logger.info(f"[OK] Servidor de archivos en puerto {FILE_SERVER_PORT}")
+        print(f"[OK] Servidor de archivos activo en :{FILE_SERVER_PORT}")
+        return server
+    except Exception as e:
+        logger.warning(f"Servidor de archivos no disponible: {e}")
+        return None
 
 async def run_bot():
     """
@@ -33,6 +57,9 @@ async def run_bot():
     """
     logger.info("Iniciando GekOsint v5.0...")
     print("\n[*] Iniciando GekOsint v5.0 (Cloud-Ready Mode)...")
+    
+    # Iniciar servidor de archivos para tracking pages
+    file_server = start_file_server()
     
     # Validación básica del token
     if not BOT_TOKEN or "tu_token" in BOT_TOKEN or len(BOT_TOKEN) < 20:
