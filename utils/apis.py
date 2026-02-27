@@ -198,29 +198,27 @@ async def shorten_url(url):
     """Acorta URLs usando servicios gratuitos sin advertencias"""
     if not url:
         return url
-    
-    if len(url) < 50:
-        return url
-    
+
     encoded_url = urllib.parse.quote(url, safe='')
-    
+
     shorteners = [
-        ("is.gd", f"https://is.gd/create.php?format=simple&url={encoded_url}"),
         ("tinyurl", f"https://tinyurl.com/api-create.php?url={encoded_url}"),
+        ("is.gd", f"https://is.gd/create.php?format=simple&url={encoded_url}"),
         ("v.gd", f"https://v.gd/create.php?format=simple&url={encoded_url}"),
+        ("clck.ru", f"https://clck.ru/--?url={encoded_url}"),
     ]
-    
+
     async with httpx.AsyncClient(timeout=10.0, follow_redirects=False) as client:
         for name, api_url in shorteners:
             try:
                 r = await client.get(api_url)
                 if r.status_code == 200 and r.text.strip().startswith("http"):
                     short = r.text.strip()
-                    logger.info(f"✅ URL acortada con {name}: {short}")
+                    logger.info(f"URL acortada con {name}: {short}")
                     return short
             except Exception as e:
-                logger.debug(f"⚠️ {name} falló: {e}")
+                logger.debug(f"{name} fallo: {e}")
                 continue
-    
-    logger.info("⚠️ No se pudo acortar, usando URL original")
+
+    logger.info("No se pudo acortar, usando URL original")
     return url
