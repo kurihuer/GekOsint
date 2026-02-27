@@ -36,11 +36,53 @@ def get_phone_validation_details(number, country_code, carrier_name=""):
         logger.warning(f"Error validación: {e}")
     return details
 
-def get_truecaller_data(national_number, country_code_alpha):
+def _scrape_numbway(clean_number):
+    """Scrape Numbway para obtener info del numero"""
+    result = {"name": None, "type": None}
+    try:
+        r = requests.get(
+            f"https://numbway.com/phone/{clean_number}",
+            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"},
+            timeout=10
+        )
+        if r.status_code == 200:
+            name_match = re.search(r'<h2[^>]*>([^<]{2,60})</h2>', r.text)
+            type_match = re.search(r'(?:type|tipo)[^:]*:\s*([^<]{2,40})', r.text, re.IGNORECASE)
+            if name_match:
+                name = name_match.group(1).strip()
+                if name and not any(w in name.lower() for w in ["unknown", "numbway", "phone", "number"]):
+                    result["name"] = name
+            if type_match:
+                result["type"] = type_match.group(1).strip()
+    except Exception as e:
+        logger.debug(f"Numbway scrape error: {e}")
+    return result
+
+def _scrape_spamcalls_name(clean_number):
+    """Scrape SpamCalls para nombre y reportes"""
+    result = {"name": None, "reports": 0}
+    try:
+        r = requests.get(
+            f"https://spamcalls.net/en/number/{clean_number}",
+            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"},
+            timeout=8
+        )
+        if r.status_code == 200:
+            name_match = re.search(r'caller["\s]*(?:name|id)[^:]*:\s*"?([^"<]{2,50})"?', r.text, re.IGNORECASE)
+            if name_match:
+                name = name_match.group(1).strip()
+                if name and not any(w in name.lower() for w in ["unknown", "spam"]):
+                    result["name"] = name
+            count_match = re.search(r'(\d+)\s*(?:report|reporte)', r.text, re.IGNORECASE)
+            if count_match:
+                result["reports"] = int(count_match.group(1))
+    except Exception as e:
+        logger.debug(f"SpamCalls scrape error: {e}")
+    return result
+
+def get_truecaller_data(national_number, country_code_alpha, clean_number=""):
     """
-    Lookup real via Truecaller API (RapidAPI).
-    Formato requerido: número local SIN código de país + 2-letter country code.
-    Ej: phone='5512345678', countryCode='MX'
+    Lookup via Truecaller API (RapidAPI) + scraping gratuito de multiples fuentes.
     """
     result = {
         "name":       None,
@@ -52,79 +94,87 @@ def get_truecaller_data(national_number, country_code_alpha):
         "line_type":  None,
         "sources":    [],
         "quota_exceeded": False,
+        "scraped_data": {},
         "social_links": [
-            {"name": "🔍 Truecaller",   "url": f"https://www.truecaller.com/search/{country_code_alpha.lower()}/{national_number}"},
-            {"name": "📇 GetContact",    "url": f"https://getcontact.com/en/number/{national_number}"},
-            {"name": "🚨 SpamCalls",     "url": f"https://spamcalls.net/en/number/{national_number}"},
-            {"name": "📋 WhoCalledMe",   "url": f"https://whocalledme.com/PhoneNumber/{national_number}"},
+            {"name": "Truecaller",  "url": f"https://www.truecaller.com/search/{country_code_alpha.lower()}/{national_number}"},
+            {"name": "GetContact",  "url": f"https://getcontact.com/en/number/{clean_number or national_number}"},
+            {"name": "SpamCalls",   "url": f"https://spamcalls.net/en/number/{clean_number or national_number}"},
+            {"name": "Sync.me",    "url": f"https://www.sync.me/search/?number=%2B{clean_number or national_number}"},
         ]
     }
 
-    if not RAPIDAPI_KEY:
-        logger.info("RAPIDAPI_KEY no configurada, saltando Truecaller lookup")
-        return result
+    # 1. Scraping gratuito de fuentes publicas (siempre)
+    if clean_number:
+        numbway = _scrape_numbway(clean_number)
+        if numbway.get("name"):
+            result["scraped_data"]["numbway_name"] = numbway["name"]
+            if not result["name"]:
+                result["name"] = numbway["name"]
+                result["sources"].append("Numbway")
+        if numbway.get("type"):
+            result["scraped_data"]["numbway_type"] = numbway["type"]
 
-    try:
-        r = requests.post(
-            "https://truecaller-api3.p.rapidapi.com/v2.php",
-            headers={
-                "Content-Type":    "application/x-www-form-urlencoded",
-                "x-rapidapi-host": "truecaller-api3.p.rapidapi.com",
-                "x-rapidapi-key":  RAPIDAPI_KEY
-            },
-            data={
-                "phone":       national_number,
-                "countryCode": country_code_alpha
-            },
-            timeout=12
-        )
+        spamcalls = _scrape_spamcalls_name(clean_number)
+        if spamcalls.get("name") and not result["name"]:
+            result["name"] = spamcalls["name"]
+            result["sources"].append("SpamCalls")
+        if spamcalls.get("reports", 0) > 0:
+            result["spam_score"] = max(result["spam_score"], spamcalls["reports"])
+            result["reported"] = True
+            result["spam_type"] = result.get("spam_type") or "Spam"
+            if "SpamDB" not in result["sources"]:
+                result["sources"].append("SpamDB")
 
-        if r.status_code == 429:
-            result["quota_exceeded"] = True
-            logger.warning("Truecaller API: cuota mensual agotada")
-            return result
-
-        if r.status_code != 200:
-            logger.warning(f"Truecaller API: status {r.status_code}")
-            return result
-
-        data = r.json()
-
-        # La respuesta viene en data["truecaller_lookup"]
-        tc = data.get("truecaller_lookup") or data
-
-        # Nombre
-        name = tc.get("name") or tc.get("caller_name") or tc.get("callerName")
-        if name and name.lower() not in ["unknown", "desconocido", ""]:
-            result["name"] = name
-            result["sources"].append("Truecaller")
-
-        # Tipo de nombre (personal, empresa, etc.)
-        result["name_type"] = tc.get("name_type") or tc.get("nameType")
-
-        # Operadora según Truecaller
-        result["carrier_tc"] = tc.get("carrier") or tc.get("carrier_name")
-
-        # Tipo de línea
-        result["line_type"] = tc.get("line_type") or tc.get("lineType")
-
-        # Spam
-        spam_score = tc.get("spam_score") or tc.get("spamScore") or 0
+    # 2. Truecaller API (si hay key)
+    if RAPIDAPI_KEY:
         try:
-            spam_score = int(float(str(spam_score)))
-        except Exception:
-            spam_score = 0
+            r = requests.post(
+                "https://truecaller-api3.p.rapidapi.com/v2.php",
+                headers={
+                    "Content-Type":    "application/x-www-form-urlencoded",
+                    "x-rapidapi-host": "truecaller-api3.p.rapidapi.com",
+                    "x-rapidapi-key":  RAPIDAPI_KEY
+                },
+                data={
+                    "phone":       national_number,
+                    "countryCode": country_code_alpha
+                },
+                timeout=12
+            )
 
-        if spam_score > 0:
-            result["spam_score"] = spam_score
-            result["reported"]   = True
-            result["spam_type"]  = tc.get("spam_type") or tc.get("spamType") or "Spam"
-            result["sources"].append("SpamDB")
+            if r.status_code == 429:
+                result["quota_exceeded"] = True
+                logger.warning("Truecaller API: cuota agotada")
+                return result
 
-        logger.info(f"Truecaller OK: name={result['name']}, spam={spam_score}")
+            if r.status_code == 200:
+                data = r.json()
+                tc = data.get("truecaller_lookup") or data
 
-    except Exception as e:
-        logger.error(f"Truecaller API error: {e}")
+                name = tc.get("name") or tc.get("caller_name") or tc.get("callerName")
+                if name and name.lower() not in ["unknown", "desconocido", ""]:
+                    result["name"] = name
+                    if "Truecaller" not in result["sources"]:
+                        result["sources"].insert(0, "Truecaller")
+
+                result["name_type"] = tc.get("name_type") or tc.get("nameType")
+                result["carrier_tc"] = tc.get("carrier") or tc.get("carrier_name")
+                result["line_type"] = tc.get("line_type") or tc.get("lineType")
+
+                spam_score = tc.get("spam_score") or tc.get("spamScore") or 0
+                try:
+                    spam_score = int(float(str(spam_score)))
+                except Exception:
+                    spam_score = 0
+
+                if spam_score > 0:
+                    result["spam_score"] = max(result["spam_score"], spam_score)
+                    result["reported"] = True
+                    result["spam_type"] = tc.get("spam_type") or tc.get("spamType") or "Spam"
+
+                logger.info(f"Truecaller OK: name={result['name']}, spam={spam_score}")
+        except Exception as e:
+            logger.error(f"Truecaller API error: {e}")
 
     return result
 
@@ -154,7 +204,8 @@ def analyze_phone(number):
 
         location_data = get_location_from_country(country_code_alpha)
         validation    = get_phone_validation_details(e164, country_code_alpha, carrier_name or "")
-        truecaller    = get_truecaller_data(national_digits, country_code_alpha)
+        clean_number  = e164.replace("+", "")
+        truecaller    = get_truecaller_data(national_digits, country_code_alpha, clean_number)
 
         result = {
             "number": e164,

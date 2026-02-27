@@ -1,416 +1,396 @@
 
 def render_header(title):
-    return f"🛡️ <b>GEKOSINT | {title}</b>\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+    return (
+        f"<b>{'=' * 28}</b>\n"
+        f"  <b>{title}</b>\n"
+        f"<b>{'=' * 28}</b>\n\n"
+    )
+
+def render_section(title):
+    return f"\n<b>--- {title} ---</b>\n"
 
 def format_ip_result(data):
-    if not data: return "⚠️ Error analizando IP."
-    if isinstance(data, dict) and "error" in data: return f"⚠️ {data['error']}"
-    
-    # Sección principal
-    txt = (
-        f"{render_header('IP INTEL')}"
-        f"🎯 <b>Target:</b> <code>{data['ip']}</code>\n\n"
-        f"🌍 <b>Ubicación:</b> {data['city']}, {data['country']}\n"
-        f"📮 <b>Código Postal:</b> {data.get('zip', 'N/A')}\n"
-        f"🕐 <b>Zona Horaria:</b> {data.get('timezone', 'N/A')}\n\n"
-    )
-    
-    # Red e ISP
-    txt += (
-        f"🏢 <b>ISP:</b> {data['isp']}\n"
-        f"🏛️ <b>Organización:</b> {data.get('org', 'N/A')}\n"
-        f"🔢 <b>ASN:</b> <code>{data.get('asn', 'N/A')}</code>\n"
-        f"🌐 <b>Hostname:</b> {data.get('hostname', 'N/A')}\n"
-        f"📡 <b>Reverse DNS:</b> {data.get('rdns', 'N/A')}\n\n"
-    )
-    
-    # WHOIS
-    txt += (
-        f"📋 <b>WHOIS:</b>\n"
-        f"  • Red: {data.get('net_name', 'N/A')}\n"
-        f"  • Rango: <code>{data.get('net_range', 'N/A')}</code>\n"
-        f"  • Abuso: {data.get('abuse_contact', 'N/A')}\n\n"
-    )
-    
-    # Clasificación y riesgo
-    txt += (
-        f"💻 <b>Tipo:</b> {data['type']}\n"
-        f"🔌 <b>Proxy/VPN:</b> {data['proxy']}\n"
-        f"🛡️ <b>Riesgo:</b> {data['risk']} ({data.get('risk_score', 0)}/100)\n"
-    )
-    
-    # Factores de riesgo
+    if not data: return "Error analizando IP."
+    if isinstance(data, dict) and "error" in data: return f"{data['error']}"
+
+    risk_bar = _risk_bar(data.get('risk_score', 0))
+
+    txt = render_header("IP INTELLIGENCE")
+    txt += f"<b>Target:</b> <code>{data['ip']}</code>\n\n"
+
+    txt += f"<b>Ubicacion:</b> {data['city']}, {data['country']}\n"
+    txt += f"<b>Codigo Postal:</b> {data.get('zip', 'N/A')}\n"
+    txt += f"<b>Zona Horaria:</b> {data.get('timezone', 'N/A')}\n"
+    txt += f"<b>Coordenadas:</b> <code>{data['coords']}</code>\n"
+
+    txt += render_section("RED / ISP")
+    txt += f"<b>ISP:</b> {data['isp']}\n"
+    txt += f"<b>Organizacion:</b> {data.get('org', 'N/A')}\n"
+    txt += f"<b>ASN:</b> <code>{data.get('asn', 'N/A')}</code>\n"
+    txt += f"<b>Hostname:</b> {data.get('hostname', 'N/A')}\n"
+    txt += f"<b>Reverse DNS:</b> {data.get('rdns', 'N/A')}\n"
+
+    txt += render_section("WHOIS")
+    txt += f"<b>Red:</b> {data.get('net_name', 'N/A')}\n"
+    txt += f"<b>Rango:</b> <code>{data.get('net_range', 'N/A')}</code>\n"
+    txt += f"<b>Abuso:</b> {data.get('abuse_contact', 'N/A')}\n"
+
+    txt += render_section("SEGURIDAD")
+    txt += f"<b>Tipo:</b> {data['type']}\n"
+    txt += f"<b>Proxy/VPN:</b> {data['proxy']}\n"
+    txt += f"<b>Riesgo:</b> {risk_bar} {data['risk']} ({data.get('risk_score', 0)}/100)\n"
+
     risk_factors = data.get('risk_factors', [])
     if risk_factors:
-        txt += f"⚠️ <b>Factores:</b> {', '.join(risk_factors)}\n"
-    
-    # Blacklist
+        txt += f"<b>Factores:</b> {', '.join(risk_factors)}\n"
+
     if data.get('blacklisted'):
-        txt += f"🚫 <b>Blacklisted:</b> SÍ — {data.get('threat_type', 'Desconocido')} ({data.get('abuse_reports', 0)} reportes)\n"
+        txt += f"<b>Blacklist:</b> SI - {data.get('threat_type', '?')} ({data.get('abuse_reports', 0)} reportes)\n"
     else:
-        txt += f"✅ <b>Blacklisted:</b> No\n"
-    
-    # Puertos abiertos
+        txt += f"<b>Blacklist:</b> No\n"
+
     open_ports = data.get('open_ports', [])
     if open_ports and open_ports != ["Ninguno detectado"]:
-        txt += f"\n🔓 <b>PUERTOS ABIERTOS:</b>\n"
-        for port in open_ports[:8]:
-            txt += f"  • <code>{port}</code>\n"
-    
-    # Mapa
-    txt += (
-        f"\n📍 <b>Coords:</b> <code>{data['coords']}</code>\n"
-        f"🗺️ <a href='{data['map_url']}'>Ver en Google Maps</a>\n"
-    )
-    
-    # Links OSINT
+        txt += render_section("PUERTOS ABIERTOS")
+        txt += " | ".join(f"<code>{p}</code>" for p in open_ports[:8]) + "\n"
+
+    txt += render_section("MAPA")
+    txt += f"<a href='{data['map_url']}'>Abrir en Google Maps</a>\n"
+
     osint = data.get('osint_links', {})
     if osint:
-        txt += f"\n🔍 <b>OSINT LINKS:</b>\n"
-        for name, url in osint.items():
-            txt += f"  • <a href='{url}'>{name}</a>\n"
-    
+        txt += render_section("OSINT LINKS")
+        txt += " | ".join(f"<a href='{url}'>{name}</a>" for name, url in osint.items()) + "\n"
+
     return txt
 
 def format_phone_result(data):
-    if "error" in data: return f"⚠️ {data['error']}"
-    
-    region = f"\n🏙️ <b>Zona Regional:</b> {data['region_detail']}" if "region_detail" in data else ""
-    
-    # Sección TrueCaller
-    tc_section = ""
+    if "error" in data: return f"{data['error']}"
+
+    txt = render_header("PHONE INTELLIGENCE")
+    txt += f"<b>Numero:</b> <code>{data['number']}</code>\n\n"
+
+    txt += f"<b>Pais:</b> {data['country']}\n"
+    txt += f"<b>Operadora:</b> {data['carrier']}\n"
+    txt += f"<b>Tipo:</b> {data['type']}\n"
+    txt += f"<b>Zona Horaria:</b> {data.get('timezone', 'N/A')}\n"
+    if "region_detail" in data:
+        txt += f"<b>Region:</b> {data['region_detail']}\n"
+
+    # Truecaller / CallerID
     tc = data.get("truecaller", {})
     if tc:
-        tc_section = "\n\n👁️ <b>CALLER ID (Truecaller):</b>\n"
+        txt += render_section("CALLER ID")
         if tc.get("quota_exceeded"):
-            tc_section += "⚠️ <i>Cuota mensual agotada — renueva el plan en RapidAPI</i>\n"
+            txt += "<i>Cuota agotada en servicio de Caller ID</i>\n"
         elif tc.get("name"):
-            tc_section += f"👤 <b>Nombre:</b> {tc['name']}"
+            txt += f"<b>Nombre:</b> {tc['name']}"
             if tc.get("name_type"):
-                tc_section += f" <i>({tc['name_type']})</i>"
-            tc_section += "\n"
+                txt += f" ({tc['name_type']})"
+            txt += "\n"
             if tc.get("carrier_tc"):
-                tc_section += f"📡 <b>Operadora (TC):</b> {tc['carrier_tc']}\n"
-            if tc.get("reported"):
-                tc_section += f"🚨 <b>Spam:</b> score {tc['spam_score']} — {tc.get('spam_type','Spam')}\n"
-            else:
-                tc_section += "✅ <b>Spam:</b> Sin reportes\n"
+                txt += f"<b>Operadora (TC):</b> {tc['carrier_tc']}\n"
         else:
-            tc_section += "❔ <b>Nombre:</b> No encontrado en base de datos\n"
-            if tc.get("reported"):
-                tc_section += f"🚨 <b>Spam:</b> score {tc['spam_score']} — {tc.get('spam_type','Spam')}\n"
-            else:
-                tc_section += "✅ <b>Spam:</b> Sin reportes\n"
-        tc_section += "🔍 <b>Buscar en:</b>\n"
-        for link in tc.get("social_links", []):
-            tc_section += f"  • <a href='{link['url']}'>{link['name']}</a>\n"
+            txt += "<b>Nombre:</b> No encontrado en base de datos\n"
 
-    location_section = ""
-    if "location" in data and data['location']:
-        loc = data['location']
-        location_section = f"\n\n📍 <b>UBICACIÓN DEL PAÍS:</b>\n"
-        location_section += f"🏛️ <b>Capital:</b> {loc.get('flag','')} {loc.get('capital','N/A')}\n"
-        location_section += f"📌 <b>Coords:</b> <code>{loc['lat']}, {loc['lon']}</code>\n"
-        location_section += f"🗺️ <a href='{loc['map_url']}'>Ver País en Mapa</a>"
-    
-    region_map_section = ""
-    if "region_coords" in data and data['region_coords']:
-        rc = data['region_coords']
-        region_map_section = f"\n\n🎯 <b>UBICACIÓN REGIONAL:</b>\n"
-        region_map_section += f"📍 <b>Coords:</b> <code>{rc['lat']}, {rc['lon']}</code>\n"
-        region_map_section += f"🗺️ <a href='{rc['map_url']}'>Ver Región en Mapa</a>"
-    
-    validation_section = ""
+        if tc.get("reported"):
+            txt += f"<b>Spam:</b> Score {tc['spam_score']} - {tc.get('spam_type', 'Spam')}\n"
+        else:
+            txt += "<b>Spam:</b> Sin reportes\n"
+
+        # Datos scrapeados de fuentes externas
+        scraped = tc.get("scraped_data", {})
+        if scraped:
+            if scraped.get("numbway_name"):
+                txt += f"<b>Nombre (Numbway):</b> {scraped['numbway_name']}\n"
+            if scraped.get("numbway_type"):
+                txt += f"<b>Info:</b> {scraped['numbway_type']}\n"
+
+    # Validacion
     if "validation" in data:
         val = data['validation']
-        status_emoji = "✅" if not val.get('possible_fraud') else "⚠️"
-        ported_text = "Sí ⚠️" if val.get('is_ported') else "No"
-        validation_section = f"\n\n🔍 <b>VALIDACIÓN:</b>\n"
-        validation_section += f"📊 <b>Estado:</b> {status_emoji} {val.get('line_status','Desconocido')}\n"
-        validation_section += f"🔄 <b>Portado:</b> {ported_text}\n"
-        validation_section += f"✔️ <b>Válido:</b> {'Sí' if data.get('is_valid') else 'No'}\n"
-        validation_section += f"🎯 <b>Posible:</b> {'Sí' if data.get('is_possible') else 'No'}"
-    
-    formats_section = f"\n\n📋 <b>FORMATOS:</b>\n"
-    formats_section += f"• E164: <code>{data['number']}</code>\n"
-    formats_section += f"• Nacional: <code>{data.get('national','N/A')}</code>\n"
-    formats_section += f"• Internacional: <code>{data.get('international','N/A')}</code>"
-    
-    return (
-        f"{render_header('GSM INTEL')}"
-        f"📱 <b>NÚMERO:</b> <code>{data['number']}</code>\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"🌍 <b>País:</b> {data['country']}\n"
-        f"📡 <b>Operadora:</b> {data['carrier']}\n"
-        f"💾 <b>Tipo:</b> {data['type']}{region}\n"
-        f"🕐 <b>Zona Horaria:</b> {data.get('timezone','N/A')}\n"
-        f"{tc_section}"
-        f"{location_section}"
-        f"{region_map_section}"
-        f"{validation_section}"
-        f"{formats_section}\n\n"
-        f"🔗 <b>CONTACTO DIRECTO:</b>\n"
-        f"• <a href='{data.get('whatsapp','#')}'>WhatsApp</a>  "
-        f"• <a href='{data.get('telegram','#')}'>Telegram</a>"
-    )
+        txt += render_section("VALIDACION")
+        status_icon = "[OK]" if not val.get('possible_fraud') else "[!]"
+        ported_text = "Si" if val.get('is_ported') else "No"
+        txt += f"<b>Estado:</b> {status_icon} {val.get('line_status', 'Desconocido')}\n"
+        txt += f"<b>Portado:</b> {ported_text}\n"
+        txt += f"<b>Valido:</b> {'Si' if data.get('is_valid') else 'No'}\n"
+
+    # Formatos
+    txt += render_section("FORMATOS")
+    txt += f"E164: <code>{data['number']}</code>\n"
+    txt += f"Nacional: <code>{data.get('national', 'N/A')}</code>\n"
+    txt += f"Internacional: <code>{data.get('international', 'N/A')}</code>\n"
+
+    # Ubicacion
+    if "location" in data and data['location']:
+        loc = data['location']
+        txt += render_section("UBICACION")
+        txt += f"<b>Capital:</b> {loc.get('flag', '')} {loc.get('capital', 'N/A')}\n"
+        txt += f"<b>Coords:</b> <code>{loc['lat']}, {loc['lon']}</code>\n"
+        txt += f"<a href='{loc['map_url']}'>Ver en Mapa</a>"
+        if "region_coords" in data and data['region_coords']:
+            rc = data['region_coords']
+            txt += f" | <a href='{rc['map_url']}'>Ver Region</a>"
+        txt += "\n"
+
+    # Contacto
+    txt += render_section("CONTACTO DIRECTO")
+    txt += f"<a href='{data.get('whatsapp', '#')}'>WhatsApp</a> | "
+    txt += f"<a href='{data.get('telegram', '#')}'>Telegram</a>\n"
+
+    # Links de busqueda
+    if tc and tc.get("social_links"):
+        txt += render_section("BUSCAR EN")
+        txt += " | ".join(f"<a href='{l['url']}'>{l['name']}</a>" for l in tc['social_links']) + "\n"
+
+    return txt
 
 def format_username_result(username, found, telegram_data=None):
-    txt = f"{render_header('SOCIAL SEARCH')}"
-    txt += f"👤 <b>Username:</b> <code>{username}</code>\n"
+    txt = render_header("USERNAME SEARCH")
+    txt += f"<b>Target:</b> <code>{username}</code>\n"
 
-    # Bloque Telegram (siempre primero)
     if telegram_data:
         tg = telegram_data
-        txt += "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        txt += "✈️ <b>TELEGRAM:</b>\n"
+        txt += render_section("TELEGRAM")
         if tg.get("exists"):
-            status_icon = "🟢"
-            txt += f"{status_icon} <b>Estado:</b> Encontrado\n"
+            txt += f"<b>Estado:</b> Encontrado\n"
             if tg.get("name"):
-                txt += f"📛 <b>Nombre:</b> {tg['name']}\n"
-            txt += f"🏷️ <b>Tipo:</b> {tg.get('type','Desconocido')}\n"
+                txt += f"<b>Nombre:</b> {tg['name']}\n"
+            txt += f"<b>Tipo:</b> {tg.get('type', 'Desconocido')}\n"
             if tg.get("id"):
-                txt += f"🆔 <b>ID:</b> <code>{tg['id']}</code>\n"
+                txt += f"<b>ID:</b> <code>{tg['id']}</code>\n"
             if tg.get("members"):
-                txt += f"👥 <b>Miembros:</b> {tg['members']:,}\n" if isinstance(tg['members'], int) else f"👥 <b>Miembros:</b> {tg['members']}\n"
+                members = f"{tg['members']:,}" if isinstance(tg['members'], int) else str(tg['members'])
+                txt += f"<b>Miembros:</b> {members}\n"
             if tg.get("bio"):
-                bio_short = tg['bio'][:120] + "..." if len(tg['bio']) > 120 else tg['bio']
-                txt += f"📝 <b>Bio:</b> {bio_short}\n"
+                bio = tg['bio'][:120] + "..." if len(tg['bio']) > 120 else tg['bio']
+                txt += f"<b>Bio:</b> {bio}\n"
             flags = []
-            if tg.get("is_verified"): flags.append("✅ Verificado")
-            if tg.get("is_bot"):      flags.append("🤖 Bot")
-            if tg.get("is_scam"):     flags.append("🚨 SCAM")
-            if tg.get("is_fake"):     flags.append("⚠️ FAKE")
+            if tg.get("is_verified"): flags.append("Verificado")
+            if tg.get("is_bot"):      flags.append("Bot")
+            if tg.get("is_scam"):     flags.append("SCAM")
+            if tg.get("is_fake"):     flags.append("FAKE")
             if flags:
-                txt += f"🏅 <b>Flags:</b> {' | '.join(flags)}\n"
-            txt += f"🔗 <a href='{tg['url']}'>Abrir en Telegram</a>\n"
+                txt += f"<b>Flags:</b> {' | '.join(flags)}\n"
+            txt += f"<a href='{tg['url']}'>Abrir en Telegram</a>\n"
         else:
-            txt += "🔴 <b>Estado:</b> No encontrado / Privado\n"
-            txt += f"🔗 <a href='https://t.me/{username}'>Verificar en Telegram</a>\n"
+            txt += "<b>Estado:</b> No encontrado / Privado\n"
 
-    # Bloque redes sociales
-    txt += "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
     if found:
-        txt += f"🌐 <b>REDES SOCIALES ({len(found)} encontradas):</b>\n\n"
+        txt += render_section(f"REDES SOCIALES ({len(found)})")
         for site, url in found:
-            txt += f"• <a href='{url}'>{site}</a>\n"
+            txt += f"  <a href='{url}'>{site}</a>\n"
     else:
-        txt += "❌ <b>No se encontraron perfiles en redes sociales.</b>\n"
+        txt += render_section("REDES SOCIALES")
+        txt += "No se encontraron perfiles.\n"
 
-    # Links OSINT adicionales
-    txt += f"\n🔍 <b>BÚSQUEDA AVANZADA:</b>\n"
-    txt += f"• <a href='https://www.google.com/search?q=%22{username}%22'>Google Dork</a>\n"
-    txt += f"• <a href='https://web.archive.org/web/*/https://*/{username}'>Wayback Machine</a>\n"
-    txt += f"• <a href='https://whatsmyname.app/?q={username}'>WhatsMyName</a>\n"
-    txt += f"• <a href='https://namechk.com/'>NameChk</a>\n"
+    txt += render_section("BUSQUEDA AVANZADA")
+    txt += f"<a href='https://www.google.com/search?q=%22{username}%22'>Google</a>"
+    txt += f" | <a href='https://web.archive.org/web/*/https://*/{username}'>Wayback</a>"
+    txt += f" | <a href='https://whatsmyname.app/?q={username}'>WhatsMyName</a>\n"
 
     return txt
 
 def format_whatsapp_result(data):
     if "error" in data:
-        return f"⚠️ {data['error']}"
+        return f"{data['error']}"
 
-    txt = f"{render_header('WHATSAPP OSINT')}"
-    txt += f"📞 <b>Número:</b> <code>{data['number']}</code>\n"
-    txt += f"🌍 <b>País:</b> {data.get('country','N/A')}  |  📡 <b>Operadora:</b> {data.get('carrier','N/A')}\n"
-    if data.get('international'):
-        txt += f"📋 <b>Internacional:</b> {data['international']}\n"
-    txt += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+    txt = render_header("WHATSAPP OSINT")
+    txt += f"<b>Numero:</b> <code>{data['number']}</code>\n"
+    txt += f"<b>Pais:</b> {data.get('country', 'N/A')}  |  <b>Operadora:</b> {data.get('carrier', 'N/A')}\n\n"
 
-    # Estado WhatsApp
+    # Estado
     reg = data.get("registered")
     if reg is True:
-        txt += "🟢 <b>WhatsApp:</b> REGISTRADO ✅\n"
+        txt += "<b>WhatsApp:</b> REGISTRADO\n"
     elif reg is False:
-        txt += "🔴 <b>WhatsApp:</b> No registrado\n"
+        txt += "<b>WhatsApp:</b> No registrado\n"
     else:
-        txt += "🟡 <b>WhatsApp:</b> Indeterminado (número privado)\n"
+        txt += "<b>WhatsApp:</b> Indeterminado\n"
 
-    # Tipo de cuenta
     if data.get("is_business"):
-        txt += "💼 <b>Tipo:</b> WhatsApp Business\n"
+        txt += "<b>Tipo:</b> WhatsApp Business\n"
 
-    # Foto de perfil
+    # Nombre obtenido
+    caller_name = data.get("caller_name")
+    if caller_name:
+        txt += render_section("IDENTIDAD")
+        txt += f"<b>Nombre:</b> {caller_name}\n"
+        if data.get("caller_source"):
+            txt += f"<b>Fuente:</b> {data['caller_source']}\n"
+
+    # Foto
     photo = data.get("photo")
     if photo:
-        txt += f"🖼️ <b>Foto de Perfil:</b> <a href='{photo}'>Ver foto pública</a>\n"
+        txt += f"<b>Foto Perfil:</b> <a href='{photo}'>Ver foto</a>\n"
     else:
-        txt += "🖼️ <b>Foto de Perfil:</b> Privada o no disponible\n"
+        txt += "<b>Foto Perfil:</b> Privada o no disponible\n"
 
-    # Presencia en otras plataformas
+    # About / Estado
+    about = data.get("about")
+    if about:
+        txt += f"<b>Estado/About:</b> {about}\n"
+
+    # Presencia social
     social = data.get("social", {})
     if social:
-        txt += "\n📱 <b>PRESENCIA SOCIAL:</b>\n"
+        txt += render_section("PRESENCIA SOCIAL")
         if social.get("telegram"):
-            txt += "  • ✈️ Telegram: Encontrado\n"
+            txt += "Telegram: Encontrado\n"
 
     # Spam
     spam = data.get("spam", {})
     total = spam.get("total_reports", 0)
-    txt += "\n🚨 <b>REPORTE DE SPAM:</b>\n"
+    txt += render_section("REPORTE SPAM")
     if total > 0:
-        txt += f"⚠️ <b>Total reportes:</b> {total}\n"
+        txt += f"<b>Total reportes:</b> {total}\n"
         if spam.get("sources"):
-            txt += f"📂 <b>Fuentes:</b> {', '.join(spam['sources'])}\n"
+            txt += f"<b>Fuentes:</b> {', '.join(spam['sources'])}\n"
         if spam.get("labels"):
-            txt += f"🏷️ <b>Etiquetas:</b> {', '.join(spam['labels'])}\n"
+            txt += f"<b>Etiquetas:</b> {', '.join(spam['labels'])}\n"
     else:
-        txt += "✅ Sin reportes de spam encontrados\n"
+        txt += "Sin reportes de spam\n"
 
-    # Contacto directo
-    txt += f"\n💬 <b>CONTACTO DIRECTO:</b>\n"
-    txt += f"• <a href='{data['wa_link']}'>Abrir perfil en WhatsApp</a>\n"
-    txt += f"• <a href='{data['wa_msg']}'>Enviar mensaje</a>\n"
+    # Contacto
+    txt += render_section("CONTACTO DIRECTO")
+    txt += f"<a href='{data['wa_link']}'>Abrir perfil</a> | "
+    txt += f"<a href='{data['wa_msg']}'>Enviar mensaje</a>\n"
 
-    # Links OSINT externos
-    txt += "\n🔍 <b>VER NOMBRE Y FOTO EN:</b>\n"
-    txt += "<i>(Truecaller y GetContact muestran el nombre público si existe)</i>\n"
+    # Links OSINT
+    txt += render_section("VERIFICAR EN")
     links = data.get("links", {})
-    icons = {
-        "truecaller":  "📞 Truecaller",
-        "getcontact":  "📇 GetContact",
-        "syncme":      "🔄 Sync.me",
-        "spamcalls":   "🚨 SpamCalls",
-        "whocalledme": "📋 WhoCalledMe",
-        "tellows":     "📊 Tellows",
-        "numbway":     "🔢 Numbway",
-        "google_dork": "🔍 Google Dork",
+    link_labels = {
+        "truecaller": "Truecaller", "getcontact": "GetContact",
+        "syncme": "Sync.me", "numbway": "Numbway",
+        "tellows": "Tellows", "google_dork": "Google",
     }
-    for key, label in icons.items():
+    link_parts = []
+    for key, label in link_labels.items():
         if links.get(key):
-            txt += f"• <a href='{links[key]}'>{label}</a>\n"
+            link_parts.append(f"<a href='{links[key]}'>{label}</a>")
+    txt += " | ".join(link_parts) + "\n"
 
     return txt
 
 def format_exif_result(data):
     if not data or "error" in data:
-        return "❌ No se encontraron metadatos EXIF o el archivo es inválido."
-    
-    txt = render_header("EXIF DATA")
-    
-    # Información del dispositivo
+        return "No se encontraron metadatos EXIF o el archivo es invalido."
+
+    txt = render_header("EXIF METADATA")
+
     device = data.get('device', {})
-    txt += f"📷 <b>Dispositivo:</b> {device.get('Make', '')} {device.get('Model', 'N/A')}\n"
-    txt += f"📅 <b>Fecha:</b> {device.get('DateTimeOriginal', 'N/A')}\n"
-    txt += f"🖼 <b>Resolución:</b> {data.get('basic', {}).get('Size', 'N/A')}\n"
-    
-    # Software
+    txt += f"<b>Dispositivo:</b> {device.get('Make', '')} {device.get('Model', 'N/A')}\n"
+    txt += f"<b>Fecha:</b> {device.get('DateTimeOriginal', 'N/A')}\n"
+    txt += f"<b>Resolucion:</b> {data.get('basic', {}).get('Size', 'N/A')}\n"
+
     if device.get('Software'):
-        txt += f"💿 <b>Software:</b> {device['Software']}\n"
-    
-    # Configuración de cámara
+        txt += f"<b>Software:</b> {device['Software']}\n"
+
     if device.get('FocalLength') or device.get('ExposureTime') or device.get('FNumber'):
-        txt += f"\n📸 <b>CONFIGURACIÓN:</b>\n"
+        txt += render_section("CONFIGURACION CAMARA")
         if device.get('FocalLength'):
-            txt += f"  • Focal: {device['FocalLength']}mm\n"
+            txt += f"Focal: {device['FocalLength']}mm\n"
         if device.get('FNumber'):
-            txt += f"  • Apertura: f/{device['FNumber']}\n"
+            txt += f"Apertura: f/{device['FNumber']}\n"
         if device.get('ExposureTime'):
-            txt += f"  • Exposición: {device['ExposureTime']}s\n"
+            txt += f"Exposicion: {device['ExposureTime']}s\n"
         if device.get('ISOSpeedRatings'):
-            txt += f"  • ISO: {device['ISOSpeedRatings']}\n"
+            txt += f"ISO: {device['ISOSpeedRatings']}\n"
         if device.get('Flash'):
-            txt += f"  • Flash: {device['Flash']}\n"
-    
-    # GPS
+            txt += f"Flash: {device['Flash']}\n"
+
     if "coords" in data and data['coords']:
-        txt += f"\n📍 <b>⚠️ GPS DETECTADO!</b>\n"
-        txt += f"🌐 <b>Coordenadas:</b> <code>{data['coords']}</code>\n"
-        txt += f"🗺️ <a href='{data.get('map', '#')}'>Ver Ubicación en Google Maps</a>\n"
-        txt += f"⚠️ <i>Esta imagen contiene datos de ubicación exacta</i>\n"
+        txt += render_section("GPS DETECTADO")
+        txt += f"<b>Coordenadas:</b> <code>{data['coords']}</code>\n"
+        txt += f"<a href='{data.get('map', '#')}'>Ver en Google Maps</a>\n"
+        txt += "<i>Esta imagen contiene ubicacion exacta</i>\n"
     else:
-        txt += "\n✅ Sin datos GPS detectados.\n"
-    
-    # Todos los metadatos raw
+        txt += "\nSin datos GPS.\n"
+
     all_tags = data.get('all_tags', {})
     if all_tags and len(all_tags) > 5:
-        txt += f"\n📋 <b>METADATOS RAW ({len(all_tags)} tags):</b>\n"
+        txt += render_section(f"METADATOS RAW ({len(all_tags)} tags)")
         count = 0
         for key, val in all_tags.items():
-            if count >= 15:
-                txt += f"  <i>... y {len(all_tags) - 15} más</i>\n"
+            if count >= 12:
+                txt += f"<i>... y {len(all_tags) - 12} mas</i>\n"
                 break
-            val_str = str(val)[:60]
-            txt += f"  • {key}: <code>{val_str}</code>\n"
+            val_str = str(val)[:50]
+            txt += f"{key}: <code>{val_str}</code>\n"
             count += 1
-        
+
     return txt
 
 def format_email_result(data):
-    if "error" in data: return "❌ Email inválido o formato incorrecto."
-    
-    mx_str = "\n  └ " + "\n  └ ".join(data['mx_records']) if data['mx_records'] else "Sin registros MX"
-    
-    # Emoji según reputación
-    rep_emoji = "🟢"
-    if data['reputation'] in ['MEDIUM', 'medium']: rep_emoji = "🟡"
-    elif data['reputation'] in ['LOW', 'low', 'RISK', 'poor']: rep_emoji = "🔴"
-    
-    txt = (
-        f"{render_header('EMAIL INTEL')}"
-        f"📧 <b>Target:</b> <code>{data['email']}</code>\n\n"
-        f"🏢 <b>Proveedor:</b> {data.get('provider', 'N/A')}\n"
-        f"⚖️ <b>Reputación:</b> {rep_emoji} {data['reputation']}\n"
-        f"🗑️ <b>Desechable:</b> {'SI ⚠️' if data['disposable'] else 'NO ✅'}\n"
-        f"🚨 <b>Sospechoso:</b> {'SI 🔴' if data['suspicious'] else 'NO 🟢'}\n"
-        f"🔓 <b>Filtrado:</b> {'SI ⚠️' if data['leaked'] else 'NO ✅'}\n"
-    )
-    
-    # Análisis del nombre de usuario
+    if "error" in data: return "Email invalido o formato incorrecto."
+
+    rep_label = data['reputation']
+    if rep_label in ['HIGH', 'high']: rep_indicator = "[BUENA]"
+    elif rep_label in ['MEDIUM', 'medium']: rep_indicator = "[MEDIA]"
+    else: rep_indicator = "[BAJA]"
+
+    txt = render_header("EMAIL INTELLIGENCE")
+    txt += f"<b>Target:</b> <code>{data['email']}</code>\n\n"
+
+    txt += f"<b>Proveedor:</b> {data.get('provider', 'N/A')}\n"
+    txt += f"<b>Reputacion:</b> {rep_indicator} {rep_label}\n"
+    txt += f"<b>Desechable:</b> {'SI' if data['disposable'] else 'NO'}\n"
+    txt += f"<b>Sospechoso:</b> {'SI' if data['suspicious'] else 'NO'}\n"
+    txt += f"<b>Filtrado:</b> {'SI' if data['leaked'] else 'NO'}\n"
+
     local = data.get('local_analysis', {})
-    if local:
-        txt += f"\n👤 <b>ANÁLISIS DEL USUARIO:</b>\n"
+    if local and (local.get('possible_name') or local.get('possible_year')):
+        txt += render_section("ANALISIS USUARIO")
         if local.get('possible_name'):
-            txt += f"  • Posible nombre: {local['possible_name']}\n"
+            txt += f"<b>Posible nombre:</b> {local['possible_name']}\n"
         if local.get('possible_year'):
-            txt += f"  • Posible año: {local['possible_year']}\n"
+            txt += f"<b>Posible anio:</b> {local['possible_year']}\n"
         if local.get('has_plus'):
-            txt += f"  • ⚠️ Usa alias (+tag): base = {local.get('base_email', 'N/A')}\n"
-    
-    # Gravatar
+            txt += f"<b>Alias (+tag):</b> base = {local.get('base_email', 'N/A')}\n"
+
     gravatar = data.get('gravatar', {})
     if gravatar.get('exists'):
-        txt += f"\n🖼️ <b>GRAVATAR:</b> <a href='{gravatar['profile']}'>Perfil encontrado</a>\n"
-    
-    # Dominio
-    txt += (
-        f"\n⚙️ <b>INFRAESTRUCTURA DNS:</b>\n"
-        f"  • Dominio: {data['domain']}\n"
-    )
+        txt += f"\n<b>Gravatar:</b> <a href='{gravatar['profile']}'>Perfil encontrado</a>\n"
+
+    txt += render_section("DNS / INFRAESTRUCTURA")
+    txt += f"<b>Dominio:</b> {data['domain']}\n"
     if data.get('domain_age'):
-        txt += f"  • Registrado: {data['domain_age']}\n"
-    txt += f"  • MX Records: {mx_str}\n"
-    
-    # Seguridad DNS
+        txt += f"<b>Registrado:</b> {data['domain_age']}\n"
+    mx = data.get('mx_records', [])
+    if mx:
+        txt += f"<b>MX:</b> {' | '.join(mx[:3])}\n"
+
     dns_sec = data.get('dns_security', {})
     if dns_sec:
-        txt += f"\n🔒 <b>SEGURIDAD DNS:</b>\n"
-        txt += f"  • SPF: {'✅ Configurado' if dns_sec.get('spf') else '❌ No configurado'}\n"
-        txt += f"  • DMARC: {'✅ Configurado' if dns_sec.get('dmarc') else '❌ No configurado'}\n"
-    
-    # Brechas de datos
-    txt += f"\n🔓 <b>BRECHAS DE DATOS:</b>\n"
+        txt += f"<b>SPF:</b> {'Configurado' if dns_sec.get('spf') else 'No'} | "
+        txt += f"<b>DMARC:</b> {'Configurado' if dns_sec.get('dmarc') else 'No'}\n"
+
     breaches = data.get('breaches', [])
+    txt += render_section("BRECHAS DE DATOS")
     if breaches:
-        txt += f"⚠️ <b>Encontrado en {len(breaches)} brechas:</b>\n"
+        txt += f"Encontrado en <b>{len(breaches)} brechas:</b>\n"
         for b in breaches[:10]:
-            txt += f"  • {b}\n"
+            txt += f"  {b}\n"
     else:
-        txt += "✅ No encontrado en brechas conocidas\n"
-    
-    # Links OSINT
-    txt += f"\n🔗 <b>VERIFICAR EN:</b>\n"
+        txt += "No encontrado en brechas conocidas\n"
+
     links = data.get('links', {})
+    txt += render_section("VERIFICAR EN")
     link_labels = {
-        'haveibeenpwned': 'HaveIBeenPwned',
-        'intelx': 'IntelligenceX',
-        'dehashed': 'DeHashed',
-        'emailrep': 'EmailRep',
-        'hunter': 'Hunter.io',
-        'google_dork': 'Google Dork',
+        'haveibeenpwned': 'HIBP', 'intelx': 'IntelX',
+        'dehashed': 'DeHashed', 'emailrep': 'EmailRep',
+        'hunter': 'Hunter', 'google_dork': 'Google',
     }
+    link_parts = []
     for key, label in link_labels.items():
         if links.get(key):
-            txt += f"• <a href='{links[key]}'>{label}</a>\n"
-    
+            link_parts.append(f"<a href='{links[key]}'>{label}</a>")
+    txt += " | ".join(link_parts) + "\n"
+
     return txt
+
+def _risk_bar(score):
+    filled = score // 10
+    empty = 10 - filled
+    return "[" + "|" * filled + "." * empty + "]"
