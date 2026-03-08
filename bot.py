@@ -11,7 +11,8 @@ from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, MessageHandler, filters
 from config import BOT_TOKEN, PAGES_DIR, PUBLIC_URL
 from handlers.commands import start, help_command, button_handler, message_handler, document_handler
-
+from handlers.commands import person_command
+app.add_handler(CommandHandler("person", person_command))
 if sys.platform == 'win32':
     try:
         os.system('chcp 65001 >nul 2>&1')
