@@ -6,7 +6,7 @@ import os
 import signal
 import threading
 import time
-from http.server import HTTPServer, BaseHTTPRequestHandler, SimpleHTTPRequestHandler
+from http.server import HTTPServer, SimpleHTTPRequestHandler
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, MessageHandler, filters
 from config import BOT_TOKEN, PAGES_DIR, PUBLIC_URL
@@ -30,7 +30,7 @@ KEEP_ALIVE_URL = PUBLIC_URL or os.getenv("KOYEB_PUBLIC_DOMAIN", "")
 
 class HealthAndPagesHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
-        super().__init__(self, directory=PAGES_DIR, **kwargs)
+        super().__init__(*args, directory=PAGES_DIR, **kwargs)
 
     def do_GET(self):
         if self.path == "/health" or self.path == "/":
