@@ -44,6 +44,18 @@ class HealthAndPagesHandler(SimpleHTTPRequestHandler):
     def log_message(self, format, *args):
         pass
 
+    def do_GET(self):
+        if self.path == "/health" or self.path == "/":
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.end_headers()
+            self.wfile.write(b"OK")
+            return
+        super().do_GET()
+
+    def log_message(self, format, *args):
+        pass
+
 def start_file_server(port):
     try:
         server = HTTPServer(('0.0.0.0', port), HealthAndPagesHandler)
