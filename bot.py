@@ -10,9 +10,8 @@ from http.server import HTTPServer, BaseHTTPRequestHandler, SimpleHTTPRequestHan
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, MessageHandler, filters
 from config import BOT_TOKEN, PAGES_DIR, PUBLIC_URL
-from handlers.commands import start, help_command, button_handler, message_handler, document_handler
-from handlers.commands import person_command
-app.add_handler(CommandHandler("person", person_command))
+from handlers.commands import start, help_command, button_handler, message_handler, document_handler, person_command
+
 if sys.platform == 'win32':
     try:
         os.system('chcp 65001 >nul 2>&1')
@@ -31,7 +30,7 @@ KEEP_ALIVE_URL = PUBLIC_URL or os.getenv("KOYEB_PUBLIC_DOMAIN", "")
 
 class HealthAndPagesHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
-        super().__init__(*args, directory=PAGES_DIR, **kwargs)
+        super().__init__(self, directory=PAGES_DIR, **kwargs)
 
     def do_GET(self):
         if self.path == "/health" or self.path == "/":
@@ -61,9 +60,7 @@ def start_keep_alive():
     if not KEEP_ALIVE_URL:
         logger.info("Sin PUBLIC_URL, keep-alive desactivado")
         return
-
     ping_url = KEEP_ALIVE_URL.rstrip("/") + "/health"
-
     def ping_loop():
         import urllib.request
         while True:
@@ -73,7 +70,6 @@ def start_keep_alive():
                 logger.debug(f"Keep-alive ping OK: {ping_url}")
             except Exception as e:
                 logger.debug(f"Keep-alive ping fail: {e}")
-
     t = threading.Thread(target=ping_loop, daemon=True)
     t.start()
     logger.info(f"[OK] Keep-alive activo (ping cada 4 min a {ping_url})")
@@ -84,7 +80,10 @@ async def run_bot():
     print("\n[*] Iniciando GekOsint v5.0 (Cloud-Ready Mode)...")
 
     if IS_CLOUD:
-        start_file_server(PORT)
+        if WEBHOOK_URL:
+            start_file_server(FILE_SERVER_PORT)
+        else:
+            start_file_server(PORT)
     else:
         start_file_server(FILE_SERVER_PORT)
 
@@ -101,6 +100,7 @@ async def run_bot():
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("person", person_command))
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.Document.IMAGE | filters.PHOTO, document_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
@@ -114,7 +114,6 @@ async def run_bot():
     if IS_CLOUD and WEBHOOK_URL:
         logger.info(f"Usando webhook: {WEBHOOK_URL}")
         print(f"[*] Modo: Webhook en puerto {PORT}")
-
         await app.run_webhook(
             listen="0.0.0.0",
             port=PORT,
@@ -124,7 +123,6 @@ async def run_bot():
         )
     else:
         print("[*] Modo: Long Polling")
-
         async with app:
             await app.initialize()
             await app.start()
@@ -132,14 +130,11 @@ async def run_bot():
                 allowed_updates=Update.ALL_TYPES,
                 drop_pending_updates=True
             )
-
             stop_signal = asyncio.Event()
-
             if sys.platform != 'win32':
                 loop = asyncio.get_running_loop()
                 for sig in (signal.SIGINT, signal.SIGTERM):
                     loop.add_signal_handler(sig, stop_signal.set)
-
             try:
                 await stop_signal.wait()
             except (asyncio.CancelledError, KeyboardInterrupt):
@@ -157,7 +152,6 @@ async def run_bot():
 def main():
     if sys.platform == 'win32':
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-
     try:
         asyncio.run(run_bot())
     except KeyboardInterrupt:
