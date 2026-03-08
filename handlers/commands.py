@@ -15,6 +15,23 @@ from modules.whatsapp_osint import analyze_whatsapp
 from utils.apis import deploy_html, shorten_url
 from config import BOT_TOKEN, logger, ALLOWED_USERS, ACCESS_RESTRICTED, ADMIN_ID
 from datetime import datetime
+from modules.people_search import search_person
+from ui.templates import format_person_result
+
+async def person_command(update, context):
+    if not await check_access(update, context):
+        return
+    name = " ".join(context.args).strip() if context.args else ""
+    if not name:
+        await update.message.reply_text("Uso: /person Nombre Apellido | nickname")
+        return
+    msg = await update.message.reply_text("⏳ Procesando...", parse_mode='HTML')
+    try:
+        data = search_person(name)
+        out = format_person_result(data)
+        await msg.edit_text(out, parse_mode='HTML', disable_web_page_preview=True)
+    except Exception as e:
+        await msg.edit_text(f"❌ Error: {e}")
 
 # --- Access Control ---
 DENIED_MSG = (
