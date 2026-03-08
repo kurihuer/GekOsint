@@ -1,16 +1,18 @@
-
 import requests
 import re
 import phonenumbers
 from phonenumbers import geocoder, carrier as ph_carrier
 from config import logger, RAPIDAPI_KEY
+import time
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 }
 
+_CACHE = {}
+_TTL = 600
+
 def check_wa_registered(clean):
-    """Verifica registro en WhatsApp via wa.me"""
     try:
         r = requests.get(
             f"https://wa.me/{clean}",
@@ -27,7 +29,6 @@ def check_wa_registered(clean):
     return None
 
 def check_spam_reports(clean):
-    """Busca reportes de spam en multiples fuentes"""
     results = {"total_reports": 0, "sources": [], "labels": []}
 
     try:
@@ -82,7 +83,6 @@ def check_spam_reports(clean):
     return results
 
 def get_wa_profile_photo(clean):
-    """Intenta obtener foto de perfil publica"""
     endpoints = [
         f"https://wa.me/p/{clean}",
         f"https://api.whatsapp.com/send?phone={clean}"
@@ -101,7 +101,6 @@ def get_wa_profile_photo(clean):
     return None
 
 def check_wa_business(clean):
-    """Verifica si es una cuenta de WhatsApp Business"""
     try:
         r = requests.get(
             f"https://wa.me/{clean}",
@@ -117,7 +116,6 @@ def check_wa_business(clean):
     return False
 
 def get_social_presence(clean, e164):
-    """Busca presencia del numero en redes sociales"""
     presence = {}
 
     try:
@@ -133,11 +131,9 @@ def get_social_presence(clean, e164):
     return presence
 
 def _get_caller_name(clean, country_code_alpha, national_number):
-    """Intenta obtener el nombre del propietario via multiples fuentes gratuitas"""
     name = None
     source = None
 
-    # 1. Numbway scraping
     try:
         r = requests.get(
             f"https://numbway.com/phone/{clean}",
@@ -154,7 +150,6 @@ def _get_caller_name(clean, country_code_alpha, national_number):
     except Exception as e:
         logger.debug(f"Numbway WA: {e}")
 
-    # 2. Truecaller API (si hay key)
     if not name and RAPIDAPI_KEY:
         try:
             r = requests.post(
@@ -180,7 +175,6 @@ def _get_caller_name(clean, country_code_alpha, national_number):
         except Exception as e:
             logger.debug(f"Truecaller WA: {e}")
 
-    # 3. SpamCalls scraping
     if not name:
         try:
             r = requests.get(
@@ -200,7 +194,6 @@ def _get_caller_name(clean, country_code_alpha, national_number):
     return name, source
 
 def analyze_whatsapp(number):
-    """Analisis completo OSINT de WhatsApp para un numero"""
     try:
         parsed = phonenumbers.parse(number, None)
         if not phonenumbers.is_valid_number(parsed):
@@ -218,15 +211,25 @@ def analyze_whatsapp(number):
         region_code = phonenumbers.region_code_for_number(parsed)
         national_digits = re.sub(r'\D', '', national)
 
+        ck = ("wa", clean)
+        now = int(time.time())
+        cached = _CACHE.get(ck)
+        if cached and now - cached[0] <= _TTL:
+            return cached[1]
+
         registered = check_wa_registered(clean)
-        spam       = check_spam_reports(clean)
-        photo      = get_wa_profile_photo(clean)
+        spam = check_spam_reports(clean)
+        photo = get_wa_profile_photo(clean)
         is_business = check_wa_business(clean)
-        social     = get_social_presence(clean, e164)
+        social = get_social_presence(clean, e164)
 
         caller_name, caller_source = _get_caller_name(clean, region_code, national_digits)
 
-        return {
+        if registered is None:
+            if caller_name or spam.get("total_reports", 0) > 0:
+                registered = True
+
+        result = {
             "number":       e164,
             "national":     national,
             "international": intl,
@@ -256,6 +259,8 @@ def analyze_whatsapp(number):
                 "google_dork": f"https://www.google.com/search?q=%22{e164}%22+OR+%22{clean}%22",
             }
         }
+        _CACHE[ck] = (now, result)
+        return result
 
     except phonenumbers.phonenumberutil.NumberParseException:
         return {"error": "Formato invalido. Usa: +521234567890"}
