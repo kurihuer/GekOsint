@@ -394,3 +394,19 @@ def _risk_bar(score):
     filled = score // 10
     empty = 10 - filled
     return "[" + "|" * filled + "." * empty + "]"
+
+def format_person_result(data):
+    if not data or not data.get("results"):
+        return "Sin resultados."
+    q = data.get("query", "")
+    res = data["results"]
+    txt = render_header("PERSON SEARCH")
+    txt += f"<b>Target:</b> <code>{q}</code>\n"
+    txt += render_section(f"RESULTADOS ({len(res)})")
+    for i, r in enumerate(res[:15], 1):
+        p = int(r.get("confidence", 0) * 100)
+        site = r.get("site", "?")
+        title = r.get("title", site)
+        url = r.get("url", "")
+        txt += f"{i}. [{site}] {title} — {p}%\n{url}\n"
+    return txt
