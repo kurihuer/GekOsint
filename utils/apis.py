@@ -4,7 +4,6 @@ import asyncio
 import urllib.parse
 import httpx
 import os
-import base64
 from config import PAGES_DIR
 
 logger = logging.getLogger(__name__)
@@ -16,7 +15,7 @@ HEADERS = {
 async def deploy_html(html_content, filename="index.html"):
     """
     Sube HTML usando múltiples servicios con fallback automático.
-    Orden: Vercel -> Catbox -> 0x0.st -> Netlify Drop
+    Orden: Servidor Local -> GitHub Gist -> Vercel -> Catbox -> 0x0.st
     """
     # Guardar localmente siempre
     filepath = os.path.join(PAGES_DIR, filename)

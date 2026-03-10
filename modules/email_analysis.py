@@ -1,17 +1,15 @@
+
 import requests
 import re
 import socket
 import hashlib
-import time
-from config import logger, HUNTER_KEY
+from config import logger, RAPIDAPI_KEY, HUNTER_KEY
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 }
 
-_CACHE = {}
-_TTL = 600
-
+# Lista expandida de dominios desechables
 DISPOSABLE_DOMAINS = {
     "tempmail.com", "guerrillamail.com", "yopmail.com", "10minutemail.com",
     "mailinator.com", "throwaway.email", "fakeinbox.com", "sharklasers.com",
@@ -32,79 +30,63 @@ DISPOSABLE_DOMAINS = {
 }
 
 def analyze_email(email):
+    """Análisis profundo de correo electrónico con múltiples fuentes"""
     email = email.strip().lower()
     
+    # Validación
     email_regex = r"^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$"
     if not re.match(email_regex, email):
         return {"error": "Formato inválido"}
     
     domain = email.split('@')[1]
     local_part = email.split('@')[0]
-    ck = ("email", email)
-    now = int(time.time())
-    cached = _CACHE.get(ck)
-    if cached and now - cached[0] <= _TTL:
-        return cached[1]
     
-    domain_exists = verify_domain(domain)
-    
-    mx_records = get_mx_records(domain)
-    
-    rep_data = get_email_reputation(email)
-    hunter = get_hunter_verification(email) if not rep_data else {}
-    
-    is_disposable = check_disposable_email(domain)
-    
-    provider = detect_email_provider(mx_records, domain)
-    
-    breaches = check_breaches(email)
-    
-    gravatar = check_gravatar(email)
-    
+    domain_exists  = verify_domain(domain)
+    mx_records     = get_mx_records(domain)
+    rep_data       = get_email_reputation(email)
+    hunter         = get_hunter_verification(email) if not rep_data else {}
+    is_disposable  = check_disposable_email(domain)
+    provider       = detect_email_provider(mx_records, domain)
+    breaches       = check_breaches(email)
+    gravatar       = check_gravatar(email)
     local_analysis = analyze_local_part(local_part)
-    
-    dns_security = check_dns_security(domain)
-    
-    domain_age = get_domain_age(domain)
-    
+    dns_security   = check_dns_security(domain)
+    domain_age     = get_domain_age(domain)
+
     reputation_label = "UNKNOWN"
-    suspicious = False
-    leaked = False
-    malicious = False
+    suspicious = leaked = malicious = False
     if rep_data:
         reputation_label = rep_data.get("reputation", "UNKNOWN").upper()
         suspicious = bool(rep_data.get("suspicious", False))
-        leaked = bool(rep_data.get("details", {}).get("credentials_leaked", False))
-        malicious = bool(rep_data.get("details", {}).get("malicious_activity", False))
+        leaked     = bool(rep_data.get("details", {}).get("credentials_leaked", False))
+        malicious  = bool(rep_data.get("details", {}).get("malicious_activity", False))
     elif hunter:
-        hs = hunter.get("status", "")
+        hs    = hunter.get("status", "")
         score = hunter.get("score", 0)
         if hs == "valid" and score >= 80:
             reputation_label = "HIGH"
         elif hs in ["risky", "accept_all"] or 40 <= score < 80:
-            reputation_label = "MEDIUM"
-            suspicious = True
+            reputation_label = "MEDIUM"; suspicious = True
         else:
-            reputation_label = "LOW"
-            suspicious = True
+            reputation_label = "LOW"; suspicious = True
 
     if mx_records and not domain_exists:
         domain_exists = True
 
-    result = {
-        "email": email,
-        "domain": domain,
-        "local_part": local_part,
-        "domain_exists": domain_exists,
-        "reputation": reputation_label,
-        "suspicious": suspicious,
-        "leaked": leaked,
-        "malicious": malicious,
-        "mx_records": mx_records[:5] if mx_records else [],
-        "disposable": is_disposable,
-        "provider": provider,
-        "breaches": breaches,
-        "gravatar": gravatar,
+    return {
+        "email":          email,
+        "domain":         domain,
+        "local_part":     local_part,
+        "domain_exists":  domain_exists,
+        "reputation":     reputation_label,
+        "suspicious":     suspicious,
+        "leaked":         leaked,
+        "malicious":      malicious,
+        "mx_records":     mx_records[:5] if mx_records else [],
+        "disposable":     is_disposable,
+        "provider":       provider,
+        "breaches":       breaches,
+        "gravatar":       gravatar,
         "local_analysis": local_analysis,
         "dns_security": dns_security,
         "domain_age": domain_age,
@@ -119,10 +101,9 @@ def analyze_email(email):
             "holehe": f"https://github.com/megadose/holehe",
         }
     }
-    _CACHE[ck] = (now, result)
-    return result
 
 def verify_domain(domain):
+    """Verifica si el dominio tiene registros DNS"""
     try:
         socket.gethostbyname(domain)
         return True
@@ -130,6 +111,7 @@ def verify_domain(domain):
         return False
 
 def get_mx_records(domain):
+    """Obtiene registros MX del dominio"""
     mx_records = []
     try:
         import dns.resolver
@@ -141,6 +123,7 @@ def get_mx_records(domain):
         mx_records = [str(rdata).rstrip('.') for rdata in answers]
         mx_records.sort()
     except ImportError:
+        # Fallback sin dnspython
         try:
             r = requests.get(
                 f"https://dns.google/resolve?name={domain}&type=MX",
@@ -157,6 +140,7 @@ def get_mx_records(domain):
     return mx_records
 
 def get_email_reputation(email):
+    """Consulta reputación en emailrep.io"""
     try:
         headers = {"User-Agent": "GekOsint/5.0", "Accept": "application/json"}
         r = requests.get(f"https://emailrep.io/{email}", headers=headers, timeout=8)
@@ -167,25 +151,31 @@ def get_email_reputation(email):
     return {}
 
 def get_hunter_verification(email):
+    """Verifica email via Hunter.io (requiere HUNTER_KEY)"""
     if not HUNTER_KEY:
         return {}
     try:
-        r = requests.get("https://api.hunter.io/v2/email-verifier", params={"email": email, "api_key": HUNTER_KEY}, timeout=10)
+        r = requests.get(
+            "https://api.hunter.io/v2/email-verifier",
+            params={"email": email, "api_key": HUNTER_KEY},
+            timeout=10
+        )
         if r.status_code == 200:
             data = r.json().get("data", {})
-            out = {
+            return {
                 "status": data.get("status"),
                 "score": data.get("score") if isinstance(data.get("score"), int) else 0
             }
-            return out
     except Exception:
-        return {}
+        pass
     return {}
 
 def check_disposable_email(domain):
+    """Verifica si es un dominio de email temporal"""
     if domain.lower() in DISPOSABLE_DOMAINS:
         return True
     
+    # Verificar con API externa como fallback
     try:
         r = requests.get(
             f"https://open.kickbox.com/v1/disposable/{domain}",
@@ -199,7 +189,9 @@ def check_disposable_email(domain):
     return False
 
 def detect_email_provider(mx_records, domain):
+    """Detecta el proveedor de email por registros MX y dominio"""
     if not mx_records:
+        # Verificar por dominio conocido
         known = {
             "gmail.com": "Google / Gmail",
             "googlemail.com": "Google / Gmail",
@@ -248,8 +240,10 @@ def detect_email_provider(mx_records, domain):
     return "Servidor Propio / Desconocido"
 
 def check_breaches(email):
+    """Verifica brechas de datos usando APIs públicas"""
     breaches = []
     
+    # Método 1: XposedOrNot (API pública gratuita)
     try:
         r = requests.get(
             f"https://api.xposedornot.com/v1/check-email/{email}",
@@ -266,30 +260,36 @@ def check_breaches(email):
     except Exception as e:
         logger.debug(f"XposedOrNot error: {e}")
     
-    try:
-        r = requests.get(
-            f"https://breachdirectory.p.rapidapi.com/?func=auto&term={email}",
-            timeout=8,
-            headers={
-                "User-Agent": "GekOsint/5.0",
-                "Accept": "application/json"
-            }
-        )
-        if r.status_code == 200:
-            data = r.json()
-            if data.get("result"):
-                for entry in data["result"][:5]:
-                    source = entry.get("sources", ["Desconocido"])
-                    if isinstance(source, list):
-                        breaches.extend(source)
-                    else:
-                        breaches.append(str(source))
-    except Exception:
-        pass
+    # Método 2: BreachDirectory via RapidAPI (requiere RAPIDAPI_KEY)
+    if RAPIDAPI_KEY:
+        try:
+            r = requests.get(
+                f"https://breachdirectory.p.rapidapi.com/?func=auto&term={email}",
+                timeout=8,
+                headers={
+                    "User-Agent": "GekOsint/5.0",
+                    "Accept": "application/json",
+                    "x-rapidapi-host": "breachdirectory.p.rapidapi.com",
+                    "x-rapidapi-key": RAPIDAPI_KEY,
+                }
+            )
+            if r.status_code == 200:
+                data = r.json()
+                if data.get("result"):
+                    for entry in data["result"][:5]:
+                        source = entry.get("sources", ["Desconocido"])
+                        if isinstance(source, list):
+                            breaches.extend(source)
+                        else:
+                            breaches.append(str(source))
+        except Exception:
+            pass
     
+    # Eliminar duplicados
     return list(set(breaches))[:15]
 
 def check_gravatar(email):
+    """Verifica si el email tiene un perfil de Gravatar"""
     try:
         email_hash = hashlib.md5(email.strip().lower().encode()).hexdigest()
         r = requests.get(
@@ -307,6 +307,7 @@ def check_gravatar(email):
     return {"exists": False}
 
 def analyze_local_part(local_part):
+    """Analiza el nombre de usuario del email para extraer información"""
     analysis = {
         "has_numbers": bool(re.search(r'\d', local_part)),
         "has_dots": '.' in local_part,
@@ -316,16 +317,19 @@ def analyze_local_part(local_part):
         "possible_year": None,
     }
     
+    # Intentar extraer nombre
     name_match = re.match(r'^([a-zA-Z]+)[._]?([a-zA-Z]+)?', local_part)
     if name_match:
         parts = [p for p in name_match.groups() if p]
         if parts:
             analysis["possible_name"] = ' '.join(p.capitalize() for p in parts)
     
+    # Intentar extraer año
     year_match = re.search(r'(19[5-9]\d|20[0-2]\d)', local_part)
     if year_match:
         analysis["possible_year"] = int(year_match.group(1))
     
+    # Alias con +
     if '+' in local_part:
         analysis["base_email"] = local_part.split('+')[0]
         analysis["alias_tag"] = local_part.split('+')[1] if len(local_part.split('+')) > 1 else None
@@ -333,6 +337,7 @@ def analyze_local_part(local_part):
     return analysis
 
 def check_dns_security(domain):
+    """Verifica registros de seguridad DNS (SPF, DMARC)"""
     security = {"spf": False, "dmarc": False, "spf_record": None, "dmarc_record": None}
     
     try:
@@ -341,6 +346,7 @@ def check_dns_security(domain):
         resolver.timeout = 5
         resolver.lifetime = 5
         
+        # SPF
         try:
             answers = resolver.resolve(domain, 'TXT')
             for rdata in answers:
@@ -352,6 +358,7 @@ def check_dns_security(domain):
         except Exception:
             pass
         
+        # DMARC
         try:
             answers = resolver.resolve(f"_dmarc.{domain}", 'TXT')
             for rdata in answers:
@@ -363,6 +370,7 @@ def check_dns_security(domain):
         except Exception:
             pass
     except ImportError:
+        # Fallback con Google DNS API
         try:
             r = requests.get(f"https://dns.google/resolve?name={domain}&type=TXT", timeout=5)
             if r.status_code == 200:
@@ -383,6 +391,7 @@ def check_dns_security(domain):
     return security
 
 def get_domain_age(domain):
+    """Intenta obtener la edad del dominio"""
     try:
         r = requests.get(
             f"https://rdap.org/domain/{domain}",

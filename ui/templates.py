@@ -395,18 +395,59 @@ def _risk_bar(score):
     empty = 10 - filled
     return "[" + "|" * filled + "." * empty + "]"
 
-def format_person_result(data):
-    if not data or not data.get("results"):
-        return "Sin resultados."
-    q = data.get("query", "")
-    res = data["results"]
-    txt = render_header("PERSON SEARCH")
-    txt += f"<b>Target:</b> <code>{q}</code>\n"
-    txt += render_section(f"RESULTADOS ({len(res)})")
-    for i, r in enumerate(res[:15], 1):
-        p = int(r.get("confidence", 0) * 100)
-        site = r.get("site", "?")
-        title = r.get("title", site)
-        url = r.get("url", "")
-        txt += f"{i}. [{site}] {title} — {p}%\n{url}\n"
+
+def format_people_result(data):
+    if not data:
+        return "Error en la búsqueda."
+    if "error" in data:
+        return f"❌ {data['error']}"
+
+    txt = render_header("PEOPLE SEARCH")
+    txt += f"🧑 <b>Objetivo:</b> <code>{data['full_name']}</code>\n\n"
+
+    variants = data.get("variants_checked", [])
+    if variants:
+        txt += f"<b>Variantes de usuario rastreadas:</b> {len(variants)}\n"
+        txt += f"<code>{', '.join(variants[:6])}</code>\n"
+
+    profiles = data.get("social_profiles", [])
+    if profiles:
+        txt += render_section(f"PERFILES ENCONTRADOS ({len(profiles)})")
+        by_site = {}
+        for p in profiles:
+            by_site.setdefault(p["site"], []).append(p)
+        for site, entries in list(by_site.items())[:12]:
+            best = entries[0]
+            txt += f"✅ <b>{site}</b> (@{best['username']})\n"
+            txt += f"   <a href='{best['url']}'>{best['url']}</a>\n"
+    else:
+        txt += render_section("PERFILES SOCIALES")
+        txt += "No se encontraron perfiles con las variantes generadas.\n"
+
+    li = data.get("linkedin", {})
+    if li.get("found"):
+        txt += render_section("LINKEDIN")
+        for url in li.get("profiles", [])[:3]:
+            txt += f"🔗 <a href='{url}'>{url}</a>\n"
+
+    fb = data.get("facebook", {})
+    if fb.get("found"):
+        txt += render_section("FACEBOOK")
+        fb_url = fb.get("url", "")
+        txt += f"🔗 <a href='{fb_url}'>{fb_url}</a>\n"
+
+    dorks = data.get("dorks", {})
+    if dorks:
+        txt += render_section("BUSQUEDAS RECOMENDADAS")
+        for label, url in list(dorks.items())[:4]:
+            txt += f"🔎 <a href='{url}'>{label}</a>\n"
+
+    osint = data.get("osint_links", {})
+    if osint:
+        txt += render_section("BASES DE DATOS OSINT")
+        for site, url in list(osint.items())[:6]:
+            txt += f"📋 <a href='{url}'>{site}</a>\n"
+
+    txt += "\n<i>⚠️ Uso exclusivamente para investigación ética y legal.</i>"
     return txt
+

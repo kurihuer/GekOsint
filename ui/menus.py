@@ -20,6 +20,7 @@ def main_menu():
             InlineKeyboardButton("🖼️ EXIF Data", callback_data='menu_exif')
         ],
         [
+            InlineKeyboardButton("🧑‍💼 People Search", callback_data='menu_people'),
             InlineKeyboardButton("ℹ️ Acerca de", callback_data='menu_about')
         ]
     ]

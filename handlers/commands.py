@@ -3,7 +3,8 @@ from telegram.ext import ContextTypes
 from ui.menus import main_menu, back_btn
 from ui.templates import (
     format_ip_result, format_phone_result, format_username_result,
-    format_email_result, format_exif_result, format_whatsapp_result
+    format_email_result, format_exif_result, format_whatsapp_result,
+    format_people_result
 )
 from modules.ip_lookup import get_ip_info
 from modules.phone_lookup import analyze_phone
@@ -12,26 +13,10 @@ from modules.email_analysis import analyze_email
 from modules.tracking import generate_tracking_page
 from modules.exif_extract import get_exif
 from modules.whatsapp_osint import analyze_whatsapp
+from modules.people_search import search_people
 from utils.apis import deploy_html, shorten_url
 from config import BOT_TOKEN, logger, ALLOWED_USERS, ACCESS_RESTRICTED, ADMIN_ID
 from datetime import datetime
-from modules.people_search import search_person
-from ui.templates import format_person_result
-
-async def person_command(update, context):
-    if not await check_access(update, context):
-        return
-    name = " ".join(context.args).strip() if context.args else ""
-    if not name:
-        await update.message.reply_text("Uso: /person Nombre Apellido | nickname")
-        return
-    msg = await update.message.reply_text("⏳ Procesando...", parse_mode='HTML')
-    try:
-        data = search_person(name)
-        out = format_person_result(data)
-        await msg.edit_text(out, parse_mode='HTML', disable_web_page_preview=True)
-    except Exception as e:
-        await msg.edit_text(f"❌ Error: {e}")
 
 # --- Access Control ---
 DENIED_MSG = (
@@ -108,7 +93,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"💚 <b>WhatsApp OSINT</b> — Registro, spam, Business\n"
         f"🌍 <b>Geo Tracker</b> — Enlace trampa de ubicación\n"
         f"📸 <b>Camera Trap</b> — Captura de cámara remota\n"
-        f"🖼️ <b>EXIF Data</b> — Metadatos, GPS, hash\n\n"
+        f"🖼️ <b>EXIF Data</b> — Metadatos, GPS, hash\n"
+        f"🧑‍💼 <b>People Search</b> — Nombre → redes, dorks, OSINT\n\n"
         f"<i>🔒 Acceso restringido — {len(ALLOWED_USERS)} usuarios autorizados</i>"
     )
     if update.callback_query:
@@ -121,10 +107,13 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # --- Callback Handler ---
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if not query:
+        return
+
     if not await check_access(update, context):
         return
-    
-    query = update.callback_query
+
     await query.answer()
     data = query.data
 
@@ -132,14 +121,34 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await start(update, context)
         return
 
+    # menu_about no requiere input del usuario
+    if data == 'menu_about':
+        context.user_data.pop('mode', None)
+        about_txt = (
+            "ℹ️ <b>GekOsint v5.0</b>\n\n"
+            "🛡️ Sistema de Inteligencia OSINT\n"
+            "📋 9 módulos activos\n"
+            "🔒 Acceso restringido\n"
+            "☁️ Cloud-Ready\n\n"
+            "<i>Desarrollado para investigación ética. Uso responsable.</i>"
+        )
+        await query.edit_message_text(about_txt, reply_markup=back_btn(), parse_mode='HTML')
+        return
+
     prompts = {
-        'menu_ip':    "📡 <b>IP Lookup</b>\n\nEnvía la dirección IP a investigar:",
-        'menu_phone': "📱 <b>Phone Intel</b>\n\nEnvía el número con código de país (ej: +52...):",
-        'menu_user':  "👤 <b>Username Search</b>\n\nEnvía el username a rastrear:",
-        'menu_email': "📧 <b>Email Analysis</b>\n\nEnvía el correo electrónico:",
-        'menu_exif':  "🖼️ <b>EXIF Data</b>\n\nEnvía una foto como <b>DOCUMENTO</b> (sin compresión).",
-        'menu_wa':    "💚 <b>WhatsApp OSINT</b>\n\nEnvía el número con código de país (ej: +52...):\n\n<i>Obtiene: nombre registrado, foto, tags, estado, links OSINT</i>",
-        'menu_about': "ℹ️ <b>GekOsint v5.0</b>\n\n🛡️ Sistema de Inteligencia OSINT\n📋 8 módulos activos\n🔒 Acceso restringido\n☁️ Cloud-Ready\n\n<i>Desarrollado para investigación ética. Uso responsable.</i>"
+        'menu_ip':     "📡 <b>IP Lookup</b>\n\nEnvía la dirección IP a investigar:",
+        'menu_phone':  "📱 <b>Phone Intel</b>\n\nEnvía el número con código de país (ej: +52...):",
+        'menu_user':   "👤 <b>Username Search</b>\n\nEnvía el username a rastrear:",
+        'menu_email':  "📧 <b>Email Analysis</b>\n\nEnvía el correo electrónico:",
+        'menu_exif':   "🖼️ <b>EXIF Data</b>\n\nEnvía una foto como <b>DOCUMENTO</b> (sin compresión).",
+        'menu_wa':     "💚 <b>WhatsApp OSINT</b>\n\nEnvía el número con código de país (ej: +52...):\n\n<i>Obtiene: nombre registrado, foto, tags, estado, links OSINT</i>",
+        'menu_people': (
+            "🧑‍💼 <b>People Search</b>\n\n"
+            "Envía el <b>nombre completo</b> a investigar:\n\n"
+            "<i>Ej: Juan García\n"
+            "Ej: María López Torres</i>\n\n"
+            "🔍 Busca perfiles en 20+ redes, genera dorks, y enlaza bases OSINT."
+        ),
     }
 
     if data in prompts:
@@ -183,7 +192,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = await update.message.reply_text("⏳ <b>Procesando...</b>", parse_mode='HTML')
     
     try:
-        response = "Error desconocido"
+        response = None
         
         if mode == 'menu_ip':
             data = get_ip_info(text.strip())
@@ -204,6 +213,23 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif mode == 'menu_wa':
             data = analyze_whatsapp(text.strip())
             response = format_whatsapp_result(data)
+
+        elif mode == 'menu_people':
+            data = search_people(text.strip())
+            response = format_people_result(data)
+
+        elif mode == 'menu_exif':
+            # El modo exif se mantiene activo hasta recibir una imagen;
+            # si el usuario envía texto, se recuerda la instrucción.
+            await msg.edit_text(
+                "🖼️ <b>EXIF Data</b>\n\nEnvía la imagen como <b>DOCUMENTO</b> (no como foto comprimida).",
+                parse_mode='HTML', reply_markup=back_btn()
+            )
+            return
+
+        if response is None:
+            await msg.delete()
+            return
 
         await msg.edit_text(response, parse_mode='HTML', disable_web_page_preview=True, reply_markup=back_btn())
         context.user_data.pop('mode', None)

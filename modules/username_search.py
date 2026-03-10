@@ -1,10 +1,12 @@
+
 import requests
 import concurrent.futures
 import re
 from config import logger, BOT_TOKEN
-import time
 
+# Plataformas expandidas — 50+ sitios organizados por categoría
 SITES = {
+    # Redes Sociales principales
     "Instagram": "https://instagram.com/{}",
     "Twitter/X": "https://x.com/{}",
     "Facebook": "https://facebook.com/{}",
@@ -14,10 +16,11 @@ SITES = {
     "LinkedIn": "https://linkedin.com/in/{}",
     "Snapchat": "https://www.snapchat.com/add/{}",
     "Tumblr": "https://{}.tumblr.com",
+    
+    # Desarrollo
     "GitHub": "https://github.com/{}",
     "GitLab": "https://gitlab.com/{}",
     "Dev.to": "https://dev.to/{}",
-    "Stack Overflow": "https://stackoverflow.com/users/{}",
     "Codepen": "https://codepen.io/{}",
     "Replit": "https://replit.com/@{}",
     "HackerRank": "https://www.hackerrank.com/{}",
@@ -27,12 +30,16 @@ SITES = {
     "PyPI": "https://pypi.org/user/{}",
     "Docker Hub": "https://hub.docker.com/u/{}",
     "Bitbucket": "https://bitbucket.org/{}",
+    
+    # Gaming
     "Steam": "https://steamcommunity.com/id/{}",
     "Roblox": "https://www.roblox.com/user.aspx?username={}",
     "Twitch": "https://twitch.tv/{}",
     "Xbox": "https://account.xbox.com/profile?gamertag={}",
     "Chess.com": "https://www.chess.com/member/{}",
     "Lichess": "https://lichess.org/@/{}",
+    
+    # Multimedia
     "Spotify": "https://open.spotify.com/user/{}",
     "SoundCloud": "https://soundcloud.com/{}",
     "Vimeo": "https://vimeo.com/{}",
@@ -40,10 +47,14 @@ SITES = {
     "Dailymotion": "https://www.dailymotion.com/{}",
     "Bandcamp": "https://{}.bandcamp.com",
     "Last.fm": "https://www.last.fm/user/{}",
+    
+    # Blogs y contenido
     "Medium": "https://medium.com/@{}",
     "WordPress": "https://{}.wordpress.com",
     "Blogger": "https://{}.blogspot.com",
     "Substack": "https://{}.substack.com",
+    
+    # Profesional
     "About.me": "https://about.me/{}",
     "Quora": "https://quora.com/profile/{}",
     "Gravatar": "https://en.gravatar.com/{}",
@@ -51,13 +62,19 @@ SITES = {
     "Patreon": "https://www.patreon.com/{}",
     "BuyMeACoffee": "https://www.buymeacoffee.com/{}",
     "Ko-fi": "https://ko-fi.com/{}",
+    
+    # Foros y comunidades
     "HackerNews": "https://news.ycombinator.com/user?id={}",
     "ProductHunt": "https://www.producthunt.com/@{}",
     "Dribbble": "https://dribbble.com/{}",
     "Behance": "https://www.behance.net/{}",
     "500px": "https://500px.com/p/{}",
     "Fiverr": "https://www.fiverr.com/{}",
+    
+    # Crypto / Web3
     "OpenSea": "https://opensea.io/{}",
+    
+    # Otros
     "Linktree": "https://linktr.ee/{}",
     "Telegram": "https://t.me/{}",
     "Clubhouse": "https://www.clubhouse.com/@{}",
@@ -72,10 +89,11 @@ HEADERS = {
     "Connection": "keep-alive",
 }
 
-_CACHE = {}
-_TTL = 600
-
 def get_telegram_info(username):
+    """
+    Obtiene información pública de un usuario/canal/bot de Telegram.
+    Usa la API de Telegram Bot para obtener datos reales.
+    """
     result = {
         "exists": False,
         "type": None,
@@ -92,6 +110,7 @@ def get_telegram_info(username):
         "url": f"https://t.me/{username}"
     }
 
+    # Método 1: API de Telegram via getChat
     try:
         r = requests.get(
             f"https://api.telegram.org/bot{BOT_TOKEN}/getChat",
@@ -121,6 +140,7 @@ def get_telegram_info(username):
     except Exception as e:
         logger.debug(f"Telegram getChat error: {e}")
 
+    # Método 2: getChatMemberCount para grupos/canales
     if result["exists"] and result["type"] in ["Grupo", "Canal"]:
         try:
             r2 = requests.get(
@@ -135,6 +155,7 @@ def get_telegram_info(username):
         except Exception as e:
             logger.debug(f"Telegram getMemberCount error: {e}")
 
+    # Método 3: Scraping de t.me como fallback si API falla
     if not result["exists"]:
         try:
             r3 = requests.get(
@@ -168,20 +189,10 @@ def get_telegram_info(username):
     return result
 
 def check_site(site, url_template, username):
+    """Verifica si un username existe en un sitio específico"""
     url = url_template.format(username)
     try:
-        h = requests.head(url, headers=HEADERS, timeout=6, allow_redirects=True)
-        if h.status_code in [200, 301, 302]:
-            if h.url and h.url.rstrip('/') in [
-                url_template.split('/{}')[0],
-                url_template.split('/@{}')[0],
-                url_template.split('/{}.')[0]
-            ]:
-                pass
-            else:
-                if h.status_code == 200:
-                    return (site, url)
-        r = requests.get(url, headers=HEADERS, timeout=10, allow_redirects=True)
+        r = requests.get(url, headers=HEADERS, timeout=8, allow_redirects=True)
         if r.status_code == 200:
             text_lower = r.text.lower()
             not_found_patterns = [
@@ -197,8 +208,10 @@ def check_site(site, url_template, username):
             for pattern in not_found_patterns:
                 if pattern in text_lower:
                     return None
+            # Páginas muy cortas con error
             if len(r.text) < 500 and ("error" in text_lower or "404" in text_lower):
                 return None
+            # Verificar que no sea una redirección a página principal
             if r.url and r.url.rstrip('/') in [
                 url_template.split('/{}')[0],
                 url_template.split('/@{}')[0],
@@ -217,21 +230,18 @@ def check_site(site, url_template, username):
     return None
 
 def search_username(username):
+    """Busca username en 50+ sitios en paralelo + Telegram lookup"""
     if not username or len(username) < 2:
         return [], None
     
     username = username.strip().replace('@', '')
-    ck = ("user", username)
-    now = int(time.time())
-    cached = _CACHE.get(ck)
-    if cached and now - cached[0] <= _TTL:
-        return cached[1], cached[2]
     found = []
     
+    # Telegram lookup primero (siempre)
     telegram_data = get_telegram_info(username)
 
     try:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=30) as executor:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
             futures = {executor.submit(check_site, site, url, username): site 
                      for site, url in SITES.items()}
             for future in concurrent.futures.as_completed(futures, timeout=45):
@@ -245,7 +255,7 @@ def search_username(username):
     except Exception as e:
         logger.error(f"Error en búsqueda de username: {e}")
     
+    # Ordenar resultados alfabéticamente
     found.sort(key=lambda x: x[0])
     
-    _CACHE[ck] = (now, found, telegram_data)
     return found, telegram_data

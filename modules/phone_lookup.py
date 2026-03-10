@@ -1,8 +1,8 @@
+
 import phonenumbers
 from phonenumbers import geocoder, carrier, timezone, number_type
 import requests
 import re
-import os
 from config import logger, RAPIDAPI_KEY, NUMVERIFY_KEY
 
 def get_location_from_country(country_code):
@@ -37,6 +37,7 @@ def get_phone_validation_details(number, country_code, carrier_name=""):
     return details
 
 def _scrape_numbway(clean_number):
+    """Scrape Numbway para obtener info del numero"""
     result = {"name": None, "type": None}
     try:
         r = requests.get(
@@ -58,6 +59,7 @@ def _scrape_numbway(clean_number):
     return result
 
 def _scrape_spamcalls_name(clean_number):
+    """Scrape SpamCalls para nombre y reportes"""
     result = {"name": None, "reports": 0}
     try:
         r = requests.get(
@@ -78,50 +80,10 @@ def _scrape_spamcalls_name(clean_number):
         logger.debug(f"SpamCalls scrape error: {e}")
     return result
 
-def _scrape_tellows(clean_number):
-    result = {"score": None, "labels": [], "reports": 0}
-    try:
-        r = requests.get(
-            f"https://www.tellows.com/num/{clean_number}",
-            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"},
-            timeout=8
-        )
-        if r.status_code == 200:
-            score_match = re.search(r'tellows score[^0-9]*([0-9]{1,2})', r.text, re.IGNORECASE)
-            if score_match:
-                try:
-                    result["score"] = int(score_match.group(1))
-                except Exception:
-                    pass
-            lab = re.findall(r'class="tag[^"]*">([^<]{2,40})<', r.text, re.IGNORECASE)
-            if lab:
-                result["labels"] = list({l.strip() for l in lab if len(l.strip()) > 1})
-            rep = re.search(r'(\d+)\s*(?:reports?|comentarios?)', r.text, re.IGNORECASE)
-            if rep:
-                try:
-                    result["reports"] = int(rep.group(1))
-                except Exception:
-                    pass
-    except Exception as e:
-        logger.debug(f"Tellows scrape error: {e}")
-    return result
-
-def _numverify_lookup(e164):
-    if not NUMVERIFY_KEY:
-        return {}
-    try:
-        r = requests.get(
-            "http://apilayer.net/api/validate",
-            params={"access_key": NUMVERIFY_KEY, "number": e164, "format": 1},
-            timeout=10
-        )
-        if r.status_code == 200:
-            return r.json()
-    except Exception as e:
-        logger.debug(f"Numverify error: {e}")
-    return {}
-
 def get_truecaller_data(national_number, country_code_alpha, clean_number=""):
+    """
+    Lookup via Truecaller API (RapidAPI) + scraping gratuito de multiples fuentes.
+    """
     result = {
         "name":       None,
         "name_type":  None,
@@ -141,6 +103,7 @@ def get_truecaller_data(national_number, country_code_alpha, clean_number=""):
         ]
     }
 
+    # 1. Scraping gratuito de fuentes publicas (siempre)
     if clean_number:
         numbway = _scrape_numbway(clean_number)
         if numbway.get("name"):
@@ -161,14 +124,8 @@ def get_truecaller_data(national_number, country_code_alpha, clean_number=""):
             result["spam_type"] = result.get("spam_type") or "Spam"
             if "SpamDB" not in result["sources"]:
                 result["sources"].append("SpamDB")
-        tellows = _scrape_tellows(clean_number)
-        if tellows.get("score"):
-            result["spam_score"] = max(result["spam_score"], tellows["score"])
-            result["reported"] = True
-            if "Tellows" not in result["sources"]:
-                result["sources"].append("Tellows")
-            result["scraped_data"]["tellows_labels"] = tellows.get("labels", [])
 
+    # 2. Truecaller API (si hay key)
     if RAPIDAPI_KEY:
         try:
             r = requests.post(
@@ -221,7 +178,25 @@ def get_truecaller_data(national_number, country_code_alpha, clean_number=""):
 
     return result
 
+
+def _numverify_lookup(e164):
+    if not NUMVERIFY_KEY:
+        return {}
+    try:
+        r = requests.get(
+            "http://apilayer.net/api/validate",
+            params={"access_key": NUMVERIFY_KEY, "number": e164, "format": 1},
+            timeout=10
+        )
+        if r.status_code == 200:
+            return r.json()
+    except Exception as e:
+        logger.debug(f"Numverify error: {e}")
+    return {}
+
+
 def analyze_phone(number):
+    """Analiza número telefónico con información extensa y lookup Truecaller real"""
     try:
         parsed = phonenumbers.parse(number, None)
         if not phonenumbers.is_valid_number(parsed):
@@ -240,6 +215,7 @@ def analyze_phone(number):
         intl               = phonenumbers.format_number(parsed, phonenumbers.PhoneNumberFormat.INTERNATIONAL)
         country_code_alpha = phonenumbers.region_code_for_number(parsed)
 
+        # Número local sin código de país (formato que necesita la API)
         national_digits = re.sub(r'\D', '', national)
 
         location_data = get_location_from_country(country_code_alpha)
@@ -249,26 +225,21 @@ def analyze_phone(number):
         nv            = _numverify_lookup(e164)
 
         result = {
-            "number": e164,
-            "national": national,
+            "number":        e164,
+            "national":      national,
             "international": intl,
-            "country": f"{country_name} (+{parsed.country_code})",
-            "country_code": country_code_alpha,
-            "carrier": carrier_name or nv.get("carrier") or "Operador desconocido/portado",
-            "type": line_type,
-            "timezone": ", ".join(time_zones) if time_zones else "No disponible",
-            "is_valid": phonenumbers.is_valid_number(parsed) if "valid" not in nv else bool(nv.get("valid")),
-            "is_possible": phonenumbers.is_possible_number(parsed),
-            "whatsapp": f"https://wa.me/{parsed.country_code}{parsed.national_number}",
-            "telegram": f"https://t.me/+{parsed.country_code}{parsed.national_number}",
-            "validation": validation,
-            "truecaller": truecaller
+            "country":       f"{country_name} (+{parsed.country_code})",
+            "country_code":  country_code_alpha,
+            "carrier":       carrier_name or nv.get("carrier") or "Operador desconocido/portado",
+            "type":          nv.get("line_type") or line_type,
+            "timezone":      ", ".join(time_zones) if time_zones else "No disponible",
+            "is_valid":      bool(nv.get("valid")) if nv else phonenumbers.is_valid_number(parsed),
+            "is_possible":   phonenumbers.is_possible_number(parsed),
+            "whatsapp":      f"https://wa.me/{parsed.country_code}{parsed.national_number}",
+            "telegram":      f"https://t.me/+{parsed.country_code}{parsed.national_number}",
+            "validation":    validation,
+            "truecaller":    truecaller
         }
-        if nv:
-            if nv.get("line_type"):
-                result["type"] = nv.get("line_type")
-            if result.get("validation"):
-                result["validation"]["line_status"] = "Activa (API)"
 
         if location_data:
             result["location"] = location_data
@@ -285,6 +256,7 @@ def analyze_phone(number):
         return {"error": str(e)}
 
 def get_specific_region(cc, national):
+    """Detecta ciudades específicas por lada"""
     if cc == 52:
         prefixes = {
             "33": "Jalisco (Guadalajara)", "55": "CDMX (Ciudad de México)", 
@@ -322,6 +294,7 @@ def get_specific_region(cc, national):
     return None
 
 def get_region_coordinates(cc, region_name):
+    """Retorna coordenadas aproximadas de regiones conocidas"""
     coords_map = {
         "52": {
             "Jalisco (Guadalajara)": {"lat": 20.6597, "lon": -103.3496},

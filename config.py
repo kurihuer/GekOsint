@@ -16,13 +16,17 @@ PAGES_DIR = os.path.join(BASE_DIR, "pages")
 os.makedirs(PAGES_DIR, exist_ok=True)
 
 # APIs Externas (Opcionales)
-IPSTACK_KEY = os.getenv("IPSTACK_KEY", "")
-NUMVERIFY_KEY = os.getenv("NUMVERIFY_KEY", "")
-HUNTER_KEY = os.getenv("HUNTER_KEY", "")
-GITHUB_TOKEN  = os.getenv("GITHUB_TOKEN", "")
-VERCEL_TOKEN  = os.getenv("VERCEL_TOKEN", "")
-RAPIDAPI_KEY  = os.getenv("RAPIDAPI_KEY", "")
-PUBLIC_URL    = os.getenv("PUBLIC_URL", "").rstrip("/")
+IPSTACK_KEY      = os.getenv("IPSTACK_KEY", "")
+NUMVERIFY_KEY    = os.getenv("NUMVERIFY_KEY", "")
+HUNTER_KEY       = os.getenv("HUNTER_KEY", "")
+GITHUB_TOKEN     = os.getenv("GITHUB_TOKEN", "")
+VERCEL_TOKEN     = os.getenv("VERCEL_TOKEN", "")
+RAPIDAPI_KEY     = os.getenv("RAPIDAPI_KEY", "")
+PUBLIC_URL       = os.getenv("PUBLIC_URL", "").rstrip("/")
+VT_API_KEY       = os.getenv("VT_API_KEY", "")
+ABUSEIPDB_KEY    = os.getenv("ABUSEIPDB_KEY", "")
+SHODAN_API_KEY   = os.getenv("SHODAN_API_KEY", "")
+GREYNOISE_API_KEY = os.getenv("GREYNOISE_API_KEY", "")
 
 # ============================================
 # CONTROL DE ACCESO — HARDCODEADO
@@ -43,8 +47,7 @@ ALLOWED_USERS = {
 ALLOWED_USERS = {uid for uid in ALLOWED_USERS if uid > 0}
 ACCESS_RESTRICTED = len(ALLOWED_USERS) > 0
 
-# ID del administrador principal (primer usuario) — recibe logs especiales
-ADMIN_ID = list(ALLOWED_USERS)[0]
+ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 
 # Configuración de Logging
 logging.basicConfig(

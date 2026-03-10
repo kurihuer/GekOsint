@@ -1,10 +1,11 @@
+
 import requests
 import socket
 import re
-import os
 import httpx
 import concurrent.futures
-from config import logger
+import time
+from config import logger, VT_API_KEY, ABUSEIPDB_KEY, SHODAN_API_KEY, GREYNOISE_API_KEY
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
@@ -29,77 +30,74 @@ def _is_private_ip(ip):
     return any(re.match(p, ip) for p in private_ranges)
 
 def _get_vt(ip):
-    key = os.getenv("VT_API_KEY", "")
-    if not key:
+    if not VT_API_KEY:
         return {}
     try:
-        r = httpx.get(f"https://www.virustotal.com/api/v3/ip_addresses/{ip}", headers={"x-apikey": key}, timeout=12)
+        r = httpx.get(
+            f"https://www.virustotal.com/api/v3/ip_addresses/{ip}",
+            headers={"x-apikey": VT_API_KEY}, timeout=12
+        )
         if r.status_code == 200:
             return r.json().get("data", {}).get("attributes", {})
     except Exception:
-        return {}
+        pass
     return {}
 
 def _get_abuseipdb(ip):
-    key = os.getenv("ABUSEIPDB_KEY", "")
-    if not key:
+    if not ABUSEIPDB_KEY:
         return {}
     try:
         r = httpx.get(
             "https://api.abuseipdb.com/api/v2/check",
             params={"ipAddress": ip, "maxAgeInDays": "90"},
-            headers={"Key": key, "Accept": "application/json"},
+            headers={"Key": ABUSEIPDB_KEY, "Accept": "application/json"},
             timeout=12
         )
         if r.status_code == 200:
             return r.json().get("data", {})
     except Exception:
-        return {}
+        pass
     return {}
 
 def _get_shodan(ip):
-    key = os.getenv("SHODAN_API_KEY", "")
-    if not key:
+    if not SHODAN_API_KEY:
         return {}
     try:
-        r = httpx.get(f"https://api.shodan.io/shodan/host/{ip}", params={"key": key}, timeout=12)
+        r = httpx.get(
+            f"https://api.shodan.io/shodan/host/{ip}",
+            params={"key": SHODAN_API_KEY}, timeout=12
+        )
         if r.status_code == 200:
             return r.json()
     except Exception:
-        return {}
+        pass
     return {}
 
 def _get_greynoise(ip):
-    key = os.getenv("GREYNOISE_API_KEY", "")
-    if not key:
+    if not GREYNOISE_API_KEY:
         return {}
     try:
-        r = httpx.get(f"https://api.greynoise.io/v3/community/ip/{ip}", headers={"key": key}, timeout=10)
+        r = httpx.get(
+            f"https://api.greynoise.io/v3/community/ip/{ip}",
+            headers={"key": GREYNOISE_API_KEY}, timeout=10
+        )
         if r.status_code == 200:
             return r.json()
     except Exception:
-        return {}
+        pass
     return {}
 
 def _get_abuse_info(ip):
     result = {"blacklisted": False, "reports": 0, "threat_type": "Ninguna"}
+    vt = _get_vt(ip)
+    if vt:
+        malicious = vt.get("last_analysis_stats", {}).get("malicious", 0)
+        if malicious > 0:
+            result["blacklisted"] = True
+            result["reports"] = malicious
+            result["threat_type"] = "Malicioso (VT)"
     try:
-        vt = _get_vt(ip)
-        if vt:
-            data = vt
-            malicious = data.get("last_analysis_stats", {}).get("malicious", 0)
-            if malicious > 0:
-                result["blacklisted"] = True
-                result["reports"] = malicious
-                result["threat_type"] = "Malicioso"
-    except Exception:
-        pass
-    try:
-        dnsbl_hosts = [
-            "zen.spamhaus.org",
-            "bl.spamcop.net",
-            "dnsbl.sorbs.net"
-        ]
+        dnsbl_hosts = ["zen.spamhaus.org", "bl.spamcop.net", "dnsbl.sorbs.net"]
         reversed_ip = '.'.join(reversed(ip.split('.')))
         for dnsbl in dnsbl_hosts:
             try:
@@ -122,15 +120,12 @@ def _get_whois_basic(ip):
             data = r.json()
             result["net_name"] = data.get("name", "N/A")
             start = data.get("startAddress", "")
-            end = data.get("endAddress", "")
+            end   = data.get("endAddress", "")
             if start and end:
                 result["net_range"] = f"{start} - {end}"
-            entities = data.get("entities", [])
-            for entity in entities:
-                roles = entity.get("roles", [])
-                if "abuse" in roles:
-                    vcards = entity.get("vcardArray", [None, []])[1]
-                    for vcard in vcards:
+            for entity in data.get("entities", []):
+                if "abuse" in entity.get("roles", []):
+                    for vcard in entity.get("vcardArray", [None, []])[1]:
                         if vcard[0] == "email":
                             result["abuse_contact"] = vcard[3]
                             break
@@ -149,8 +144,7 @@ def _get_open_ports(ip):
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(0.5)
-            result = sock.connect_ex((ip, port))
-            if result == 0:
+            if sock.connect_ex((ip, port)) == 0:
                 open_ports.append(f"{port}/{service}")
             sock.close()
         except Exception:
@@ -161,23 +155,28 @@ def get_ip_info(ip_address):
     ip_address = ip_address.strip()
     if not _is_valid_ip(ip_address):
         try:
-            resolved = socket.gethostbyname(ip_address)
-            ip_address = resolved
+            ip_address = socket.gethostbyname(ip_address)
         except Exception:
             return {"error": f"'{ip_address}' no es una IP válida ni un hostname resoluble."}
     if _is_private_ip(ip_address):
-        return {"error": f"'{ip_address}' es una IP privada/reservada. Solo se analizan IPs públicas."}
+        return {"error": f"'{ip_address}' es una IP privada/reservada."}
+
     ck = ("ip", ip_address)
-    now = int(__import__("time").time())
+    now = int(time.time())
     entry = _CACHE.get(ck)
     if entry and now - entry[0] <= _TTL:
         return entry[1]
+
     try:
-        url = f"http://ip-api.com/json/{ip_address}?fields=status,message,country,countryCode,region,regionName,city,zip,lat,lon,timezone,isp,org,as,proxy,hosting,query,mobile"
-        response = requests.get(url, timeout=10, headers=HEADERS)
-        data = response.json()
+        url = (
+            f"http://ip-api.com/json/{ip_address}"
+            "?fields=status,message,country,countryCode,region,regionName,"
+            "city,zip,lat,lon,timezone,isp,org,as,proxy,hosting,query,mobile"
+        )
+        data = requests.get(url, timeout=10, headers=HEADERS).json()
         if data.get('status') != 'success':
             return {"error": "IP no encontrada o privada/bogon."}
+
         extra = {}
         try:
             r2 = requests.get(f"https://ipinfo.io/{ip_address}/json", timeout=8, headers=HEADERS)
@@ -185,55 +184,41 @@ def get_ip_info(ip_address):
                 extra = r2.json()
         except Exception:
             pass
-        shodan_data = {}
-        abuse_data = {}
-        gn_data = {}
+
+        shodan_data, abuse_data, gn_data = {}, {}, {}
         with concurrent.futures.ThreadPoolExecutor(max_workers=3) as ex:
-            fut_shodan = ex.submit(_get_shodan, ip_address)
-            fut_abuse = ex.submit(_get_abuseipdb, ip_address)
-            fut_gn = ex.submit(_get_greynoise, ip_address)
-            try:
-                shodan_data = fut_shodan.result(timeout=12)
-            except Exception:
-                shodan_data = {}
-            try:
-                abuse_data = fut_abuse.result(timeout=12)
-            except Exception:
-                abuse_data = {}
-            try:
-                gn_data = fut_gn.result(timeout=12)
-            except Exception:
-                gn_data = {}
-        is_proxy = data.get('proxy', False)
+            fut_s = ex.submit(_get_shodan, ip_address)
+            fut_a = ex.submit(_get_abuseipdb, ip_address)
+            fut_g = ex.submit(_get_greynoise, ip_address)
+            try: shodan_data = fut_s.result(timeout=12)
+            except Exception: pass
+            try: abuse_data = fut_a.result(timeout=12)
+            except Exception: pass
+            try: gn_data = fut_g.result(timeout=12)
+            except Exception: pass
+
+        is_proxy   = data.get('proxy', False)
         is_hosting = data.get('hosting', False)
-        is_mobile = data.get('mobile', False)
-        risk_score = 0
-        risk_factors = []
-        if is_proxy:
-            risk_score += 40
-            risk_factors.append("VPN/Proxy")
-        if is_hosting:
-            risk_score += 30
-            risk_factors.append("Datacenter")
-        if shodan_data.get("ports"):
-            risk_score += 10
-            risk_factors.append("Servicios expuestos")
+        is_mobile  = data.get('mobile', False)
+
+        risk_score, risk_factors = 0, []
+        if is_proxy:    risk_score += 40; risk_factors.append("VPN/Proxy")
+        if is_hosting:  risk_score += 30; risk_factors.append("Datacenter")
+        if shodan_data.get("ports"): risk_score += 10; risk_factors.append("Servicios expuestos")
         if abuse_data.get("totalReports", 0) > 0:
             risk_score += min(30, 5 + abuse_data.get("totalReports", 0))
-            risk_factors.append("Reportes de abuso")
-        if gn_data.get("classification"):
-            cls = str(gn_data.get("classification"))
-            if cls.lower() != "benign":
-                risk_score += 15
-                risk_factors.append(f"GreyNoise {cls}")
+            risk_factors.append("Reportes AbuseIPDB")
+        if gn_data.get("classification") and str(gn_data["classification"]).lower() != "benign":
+            risk_score += 15; risk_factors.append(f"GreyNoise {gn_data['classification']}")
         abuse = _get_abuse_info(ip_address)
         if abuse.get("blacklisted"):
-            risk_score += 30
-            risk_factors.append(f"Blacklist ({abuse.get('reports',0)})")
-        risk_emoji = "🟢 Baja"
-        if risk_score > 20: risk_emoji = "🟡 Media"
-        if risk_score > 50: risk_emoji = "🔴 Alta"
-        if risk_score > 70: risk_emoji = "⛔ Crítica"
+            risk_score += 30; risk_factors.append(f"Blacklist ({abuse.get('reports',0)})")
+
+        if   risk_score > 70: risk_label = "⛔ Crítica"
+        elif risk_score > 50: risk_label = "🔴 Alta"
+        elif risk_score > 20: risk_label = "🟡 Media"
+        else:                 risk_label = "🟢 Baja"
+
         rdns = "No disponible"
         try:
             rdns_req = requests.get(
@@ -246,67 +231,67 @@ def get_ip_info(ip_address):
                     rdns = answers[0].get('data', 'N/A').rstrip('.')
         except Exception:
             pass
-        whois = _get_whois_basic(ip_address)
+
+        whois      = _get_whois_basic(ip_address)
         open_ports = _get_open_ports(ip_address)
         if shodan_data.get("ports"):
             try:
-                names = []
-                for p in shodan_data.get("ports", []):
+                extra_ports = []
+                for p in shodan_data["ports"]:
                     try:
-                        s = socket.getservbyport(int(p))
-                        names.append(f"{p}/{s.upper()}")
+                        svc = socket.getservbyport(int(p))
+                        extra_ports.append(f"{p}/{svc.upper()}")
                     except Exception:
-                        names.append(f"{p}/TCP")
-                if names:
-                    open_ports = sorted(list({*open_ports, *names}))
+                        extra_ports.append(f"{p}/TCP")
+                open_ports = sorted(list({*open_ports, *extra_ports}))
             except Exception:
                 pass
-        if is_mobile:
-            conn_type = "📱 Móvil"
-        elif is_hosting:
-            conn_type = "🏢 Datacenter/Hosting"
-        else:
-            conn_type = "🏠 Residencial"
+
+        if is_mobile:        conn_type = "📱 Móvil"
+        elif is_hosting:     conn_type = "🏢 Datacenter/Hosting"
+        else:                conn_type = "🏠 Residencial"
+
         result = {
-            "ip": data['query'],
-            "country": f"{data['country']} {data['countryCode']}",
-            "country_code": data['countryCode'],
-            "city": f"{data['city']}, {data['regionName']}",
-            "region": data.get('regionName', 'N/A'),
-            "zip": data.get('zip', 'N/A'),
-            "coords": f"{data['lat']}, {data['lon']}",
-            "lat": data['lat'],
-            "lon": data['lon'],
-            "timezone": data['timezone'],
-            "isp": data['isp'],
-            "org": data['org'],
-            "asn": data.get('as', 'N/A'),
-            "rdns": rdns,
-            "type": conn_type,
-            "proxy": "⚠️ VPN/Proxy Detectado" if is_proxy else "✅ Limpia",
-            "risk": risk_emoji,
-            "risk_score": risk_score,
-            "risk_factors": risk_factors,
-            "map_url": f"https://www.google.com/maps?q={data['lat']},{data['lon']}",
-            "hostname": extra.get("hostname", rdns),
-            "net_name": whois["net_name"],
-            "net_range": whois["net_range"],
+            "ip":            data['query'],
+            "country":       f"{data['country']} {data['countryCode']}",
+            "country_code":  data['countryCode'],
+            "city":          f"{data['city']}, {data['regionName']}",
+            "region":        data.get('regionName', 'N/A'),
+            "zip":           data.get('zip', 'N/A'),
+            "coords":        f"{data['lat']}, {data['lon']}",
+            "lat":           data['lat'],
+            "lon":           data['lon'],
+            "timezone":      data['timezone'],
+            "isp":           data['isp'],
+            "org":           data['org'],
+            "asn":           data.get('as', 'N/A'),
+            "rdns":          rdns,
+            "type":          conn_type,
+            "proxy":         "⚠️ VPN/Proxy Detectado" if is_proxy else "✅ Limpia",
+            "risk":          risk_label,
+            "risk_score":    risk_score,
+            "risk_factors":  risk_factors,
+            "map_url":       f"https://www.google.com/maps?q={data['lat']},{data['lon']}",
+            "hostname":      extra.get("hostname", rdns),
+            "net_name":      whois["net_name"],
+            "net_range":     whois["net_range"],
             "abuse_contact": whois["abuse_contact"],
-            "open_ports": open_ports,
-            "blacklisted": abuse.get("blacklisted", False) or abuse_data.get("abuseConfidenceScore", 0) > 0,
-            "threat_type": abuse.get("threat_type", "Ninguna"),
+            "open_ports":    open_ports,
+            "blacklisted":   abuse.get("blacklisted", False) or abuse_data.get("abuseConfidenceScore", 0) > 0,
+            "threat_type":   abuse.get("threat_type", "Ninguna"),
             "abuse_reports": abuse.get("reports", 0) or abuse_data.get("totalReports", 0),
             "osint_links": {
-                "Shodan": f"https://www.shodan.io/host/{ip_address}",
-                "Censys": f"https://search.censys.io/hosts/{ip_address}",
-                "VirusTotal": f"https://www.virustotal.com/gui/ip-address/{ip_address}",
+                "Shodan":    f"https://www.shodan.io/host/{ip_address}",
+                "Censys":    f"https://search.censys.io/hosts/{ip_address}",
+                "VirusTotal":f"https://www.virustotal.com/gui/ip-address/{ip_address}",
                 "AbuseIPDB": f"https://www.abuseipdb.com/check/{ip_address}",
                 "GreyNoise": f"https://viz.greynoise.io/ip/{ip_address}",
-                "IPVoid": f"https://www.ipvoid.com/ip-blacklist-check/?ip={ip_address}",
+                "IPVoid":    f"https://www.ipvoid.com/ip-blacklist-check/?ip={ip_address}",
             }
         }
         _CACHE[ck] = (now, result)
         return result
+
     except Exception as e:
         logger.error(f"Error IP: {e}")
         return {"error": f"Error analizando IP: {str(e)}"}

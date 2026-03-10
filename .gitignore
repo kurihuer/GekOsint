@@ -34,3 +34,8 @@ deploy_result.txt
 
 # Archivos de memoria del proyecto
 mem.md
+
+GekOsint2/
+HexSecGPT/
+check_bot.py
+install_hexsecgpt.bat

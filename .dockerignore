@@ -16,3 +16,9 @@ Thumbs.db
 .DS_Store
 venv/
 .venv/
+
+GekOsint2/
+HexSecGPT/
+*.bat
+check_bot.py
+docker-compose.yml
