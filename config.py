@@ -47,7 +47,7 @@ ALLOWED_USERS = {
 ALLOWED_USERS = {uid for uid in ALLOWED_USERS if uid > 0}
 ACCESS_RESTRICTED = len(ALLOWED_USERS) > 0
 
-ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
+ADMIN_ID = int(os.getenv("ADMIN_ID", "0") or "0")
 
 # Configuración de Logging
 logging.basicConfig(
