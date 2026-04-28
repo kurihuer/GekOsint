@@ -74,8 +74,11 @@ async def deploy_html(html_content, filename="index.html"):
     Sube HTML usando múltiples servicios con fallback automático.
     Orden: Servidor Local -> GitHub Gist -> Vercel -> Catbox -> 0x0.st
 
-    Cada deployer es validado con HEAD/GET antes de devolverse al usuario,
-    así nunca se envía un enlace que dé 404.
+    El "Servidor Local" tiene verificación ESTRICTA: si la URL no responde 200
+    con HTML, se descarta (era la causa del 404 del v6.0). Para los servicios
+    externos (Gist/Vercel/Catbox/0x0) la verificación es BEST-EFFORT: si pasa,
+    perfecto; si falla (timeouts, 403 anti-abuse desde la IP del host), igual
+    se mantiene como fallback — peor un link sin validar que ningún link.
     """
     # Guardar localmente siempre
     filepath = os.path.join(PAGES_DIR, filename)
@@ -83,40 +86,53 @@ async def deploy_html(html_content, filename="index.html"):
         f.write(html_content)
     logger.info(f"📁 Archivo guardado: {filepath}")
 
-    # Intentar cada servicio en orden
+    # (nombre, función, strict_verify)
+    # strict_verify=True  → si HEAD/GET falla, se descarta la URL
+    # strict_verify=False → si HEAD/GET falla, se guarda como fallback
     deployers = [
-        ("Servidor Local", _deploy_local),
-        ("GitHub Gist",    _deploy_gist),
-        ("Vercel",         _deploy_vercel),
-        ("Catbox",         _deploy_catbox),
-        ("0x0.st",         _deploy_0x0),
+        ("Servidor Local", _deploy_local,  True),
+        ("GitHub Gist",    _deploy_gist,   False),
+        ("Vercel",         _deploy_vercel, False),
+        ("Catbox",         _deploy_catbox, False),
+        ("0x0.st",         _deploy_0x0,    False),
     ]
 
-    last_unverified = None  # último candidato que devolvió URL pero no verificó
+    fallback = None  # primer URL "best-effort" que vemos
 
-    for name, deployer in deployers:
+    for name, deployer, strict in deployers:
         try:
             url = await deployer(html_content, filename)
-            if not url:
-                continue
-
-            if await _verify_url_serves_html(url):
-                logger.info(f"✅ Deploy verificado via {name}: {url}")
-                return url
-
-            logger.warning(f"⚠️ {name} devolvió {url} pero no sirve HTML — probando siguiente")
-            last_unverified = (name, url)
         except Exception as e:
-            logger.warning(f"⚠️ {name} falló: {e}")
+            logger.warning(f"⚠️ {name} falló al deployar: {e}")
             continue
 
-    if last_unverified:
-        logger.error(
-            f"❌ Ningún deploy verificó. Último intento sin validar: "
-            f"{last_unverified[0]} → {last_unverified[1]}"
+        if not url:
+            logger.debug(f"➖ {name}: sin credenciales o no aplicable")
+            continue
+
+        verified = await _verify_url_serves_html(url)
+        if verified:
+            logger.info(f"✅ Deploy verificado via {name}: {url}")
+            return url
+
+        if strict:
+            logger.warning(f"⚠️ {name} no verificó — descartado (strict): {url}")
+            continue
+
+        logger.warning(f"⚠️ {name} no verificó — guardado como fallback: {url}")
+        if fallback is None:
+            fallback = (name, url)
+
+    if fallback:
+        logger.info(
+            f"↩️ Usando fallback no verificado: {fallback[0]} → {fallback[1]}"
         )
-    else:
-        logger.error("❌ Todos los servicios de deploy fallaron")
+        return fallback[1]
+
+    logger.error(
+        "❌ Todos los servicios de deploy fallaron. "
+        "Configurá GITHUB_TOKEN (scope=gist) o VERCEL_TOKEN para producción."
+    )
     return None
 
 
@@ -323,6 +339,39 @@ async def upload_bytes(file_bytes: bytes, filename: str, content_type: str = "ap
     async with httpx.AsyncClient(timeout=30.0) as client:
         try:
             files = {"fileToUpload": (filename, file_bytes, content_type)}
+            data = {"reqtype": "fileupload"}
+            r = await client.post("https://catbox.moe/user/api.php", data=data, files=files)
+            if r.status_code == 200 and r.text.strip().startswith("http"):
+                return r.text.strip()
+        except Exception as e:
+            logger.debug(f"upload catbox fallo: {e}")
+
+        try:
+            files = {"file": (filename, file_bytes, content_type)}
+            r = await client.post("https://0x0.st", files=files)
+            if r.status_code == 200 and r.text.strip().startswith("http"):
+                return r.text.strip()
+        except Exception as e:
+            logger.debug(f"upload 0x0 fallo: {e}")
+
+    return None_bytes, content_type)}
+            data = {"reqtype": "fileupload"}
+            r = await client.post("https://catbox.moe/user/api.php", data=data, files=files)
+            if r.status_code == 200 and r.text.strip().startswith("http"):
+                return r.text.strip()
+        except Exception as e:
+            logger.debug(f"upload catbox fallo: {e}")
+
+        try:
+            files = {"file": (filename, file_bytes, content_type)}
+            r = await client.post("https://0x0.st", files=files)
+            if r.status_code == 200 and r.text.strip().startswith("http"):
+                return r.text.strip()
+        except Exception as e:
+            logger.debug(f"upload 0x0 fallo: {e}")
+
+    return None
+_bytes, content_type)}
             data = {"reqtype": "fileupload"}
             r = await client.post("https://catbox.moe/user/api.php", data=data, files=files)
             if r.status_code == 200 and r.text.strip().startswith("http"):
