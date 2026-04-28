@@ -354,37 +354,4 @@ async def upload_bytes(file_bytes: bytes, filename: str, content_type: str = "ap
         except Exception as e:
             logger.debug(f"upload 0x0 fallo: {e}")
 
-    return None_bytes, content_type)}
-            data = {"reqtype": "fileupload"}
-            r = await client.post("https://catbox.moe/user/api.php", data=data, files=files)
-            if r.status_code == 200 and r.text.strip().startswith("http"):
-                return r.text.strip()
-        except Exception as e:
-            logger.debug(f"upload catbox fallo: {e}")
-
-        try:
-            files = {"file": (filename, file_bytes, content_type)}
-            r = await client.post("https://0x0.st", files=files)
-            if r.status_code == 200 and r.text.strip().startswith("http"):
-                return r.text.strip()
-        except Exception as e:
-            logger.debug(f"upload 0x0 fallo: {e}")
-
-    return None
-_bytes, content_type)}
-            data = {"reqtype": "fileupload"}
-            r = await client.post("https://catbox.moe/user/api.php", data=data, files=files)
-            if r.status_code == 200 and r.text.strip().startswith("http"):
-                return r.text.strip()
-        except Exception as e:
-            logger.debug(f"upload catbox fallo: {e}")
-
-        try:
-            files = {"file": (filename, file_bytes, content_type)}
-            r = await client.post("https://0x0.st", files=files)
-            if r.status_code == 200 and r.text.strip().startswith("http"):
-                return r.text.strip()
-        except Exception as e:
-            logger.debug(f"upload 0x0 fallo: {e}")
-
     return None
