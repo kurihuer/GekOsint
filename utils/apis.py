@@ -192,8 +192,16 @@ async def _deploy_gist(html_content, filename):
             gist = r.json()
             gist_id = gist.get("id", "")
             owner = gist.get("owner", {}).get("login", "")
+            # Sacar el commit SHA del gist — necesario para el CDN de producción
+            history = gist.get("history") or []
+            sha = history[0].get("version", "") if history else ""
+            if owner and gist_id and sha:
+                # gistcdn.githack.com = CDN de producción → sirve directo,
+                # SIN página "One more step". Requiere SHA del commit.
+                return f"https://gistcdn.githack.com/{owner}/{gist_id}/raw/{sha}/{filename}"
             if owner and gist_id:
-                # GitHack sirve el Gist con text/html correcto
+                # Fallback: dev URL (puede mostrar preview, pero al menos sirve)
+                logger.warning("_deploy_gist: gist sin SHA — usando URL dev")
                 return f"https://gist.githack.com/{owner}/{gist_id}/raw/{filename}"
             logger.warning(f"_deploy_gist: respuesta 201 sin owner/id ({gist!r})")
             return None
