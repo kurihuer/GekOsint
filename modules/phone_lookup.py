@@ -116,13 +116,38 @@ def _scrape_truecaller_web(clean_number: str, country_alpha: str) -> dict:
                 name = m.group(1).strip()
                 if name and not any(w in name.lower() for w in ["truecaller", "unknown", "caller"]):
                     result["name"] = name
-            # Spam hints
-            if re.search(r'spam|fraude|telemarketing|scam', r.text, re.IGNORECASE):
+            low = (r.text or "").lower()
+            m_score = re.search(r'(?:spam\s*score|spamScore)[^0-9]{0,20}(\d{1,3})', low)
+            if m_score:
+                try:
+                    result["spam_score"] = max(0, min(100, int(m_score.group(1))))
+                except Exception:
+                    pass
+            if re.search(r'reported\s+as\s+spam|marked\s+as\s+spam|es\s+spam', low):
                 result["reported"] = True
-                result["spam_score"] = 30
+                if result["spam_score"] <= 0:
+                    result["spam_score"] = 30
     except Exception as e:
         logger.debug(f"[phone] truecaller web scrape error: {e}")
     return result
+
+
+def _check_whatsapp_registered(clean_number: str) -> bool | None:
+    try:
+        r = requests.get(
+            f"https://wa.me/{clean_number}",
+            headers={"User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15"},
+            timeout=8,
+            allow_redirects=True,
+        )
+        if r.status_code == 200:
+            if "api.whatsapp.com/send" in (r.url or "") or "api.whatsapp.com/send" in (r.text or ""):
+                return True
+            if "phone_number_invalid" in (r.text or ""):
+                return False
+    except Exception:
+        pass
+    return None
 
 
 def _scrape_spamcalls(clean_number: str) -> dict:
@@ -395,6 +420,10 @@ def analyze_phone(number: str) -> dict:
             labels = spam_data.get("labels") or []
             spam_type = labels[0] if labels else "Spam"
 
+    whatsapp_registered = _check_whatsapp_registered(clean)
+    e164_q = requests.utils.quote(e164)
+    clean_q = requests.utils.quote(clean)
+
     return {
         # Identificación
         "number":        e164,
@@ -445,7 +474,17 @@ def analyze_phone(number: str) -> dict:
 
         # Links directos
         "whatsapp": f"https://wa.me/{cc}{parsed.national_number}",
-        "telegram": f"https://t.me/+{cc}{parsed.national_number}",
+        "telegram_search": f"https://www.google.com/search?q=site%3At.me+%22{clean_q}%22+OR+%22{e164_q}%22",
+        "presence": {
+            "whatsapp_registered": whatsapp_registered,
+        },
+        "social_search_links": [
+            {"name": "Google", "url": f"https://www.google.com/search?q=%22{clean_q}%22+OR+%22{e164_q}%22"},
+            {"name": "Facebook", "url": f"https://www.google.com/search?q=site%3Afacebook.com+%22{clean_q}%22+OR+%22{e164_q}%22"},
+            {"name": "Instagram", "url": f"https://www.google.com/search?q=site%3Ainstagram.com+%22{clean_q}%22+OR+%22{e164_q}%22"},
+            {"name": "TikTok", "url": f"https://www.google.com/search?q=site%3Atiktok.com+%22{clean_q}%22+OR+%22{e164_q}%22"},
+            {"name": "X", "url": f"https://www.google.com/search?q=site%3Ax.com+%22{clean_q}%22+OR+%22{e164_q}%22"},
+        ],
 
         # Links OSINT externos
         "osint_links": [

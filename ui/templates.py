@@ -149,6 +149,17 @@ def format_phone_result(data: dict) -> str:
     else:
         txt += "✅ Sin reportes de spam en bases consultadas\n"
 
+    pres = data.get("presence", {}) or {}
+    if pres:
+        txt += render_section("PRESENCIA (HEURÍSTICA)")
+        wa = pres.get("whatsapp_registered")
+        if wa is True:
+            txt += "💚 <b>WhatsApp:</b> Probable registrado\n"
+        elif wa is False:
+            txt += "💚 <b>WhatsApp:</b> No registrado\n"
+        else:
+            txt += "💚 <b>WhatsApp:</b> No se pudo determinar\n"
+
     # ── Riesgo consolidado ────────────────────────────────────────────────
     flags = data.get("risk_flags", [])
     txt += render_section("EVALUACIÓN DE RIESGO")
@@ -201,14 +212,21 @@ def format_phone_result(data: dict) -> str:
 
     # ── Contacto directo ──────────────────────────────────────────────────
     txt += render_section("CONTACTO DIRECTO")
-    txt += f"<a href='{data.get('whatsapp', '#')}'>💬 WhatsApp</a> | "
-    txt += f"<a href='{data.get('telegram', '#')}'>✈️ Telegram</a>\n"
+    txt += f"<a href='{data.get('whatsapp', '#')}'>💬 WhatsApp</a>\n"
+    if data.get("telegram_search"):
+        txt += f"<a href='{data['telegram_search']}'>✈️ Telegram (búsqueda)</a>\n"
+        txt += "<i>Nota: Telegram no permite abrir chat por número con un link público si el usuario no tiene username o lo tiene privado.</i>\n"
 
     # ── Links OSINT ───────────────────────────────────────────────────────
     links = data.get("osint_links", [])
     if links:
         txt += render_section("VERIFICAR EN")
         txt += " | ".join(f"<a href='{l['url']}'>{l['name']}</a>" for l in links) + "\n"
+
+    socials = data.get("social_search_links", [])
+    if socials:
+        txt += render_section("BÚSQUEDA EN REDES (DORKS)")
+        txt += " | ".join(f"<a href='{l['url']}'>{l['name']}</a>" for l in socials) + "\n"
 
     return txt
 
@@ -497,8 +515,8 @@ def format_whatsapp_result(data: dict) -> str:
     txt += render_section("CONTACTO DIRECTO")
     txt += f"<a href='{data['wa_link']}'>Abrir perfil</a> | "
     txt += f"<a href='{data['wa_msg']}'>Enviar mensaje</a>\n"
-    if data.get("tg_link"):
-        txt += f"<a href='{data['tg_link']}'>Telegram por número</a>\n"
+    if data.get("tg_search"):
+        txt += f"<a href='{data['tg_search']}'>Telegram (búsqueda)</a>\n"
 
     links = data.get("links", {})
     _lmap = {

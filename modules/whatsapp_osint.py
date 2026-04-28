@@ -249,7 +249,7 @@ def analyze_whatsapp(number):
             "social":       social,
             "wa_link":      f"https://wa.me/{clean}",
             "wa_msg":       f"https://api.whatsapp.com/send?phone={clean}",
-            "tg_link":      f"https://t.me/+{clean}",
+            "tg_search":    f"https://www.google.com/search?q=site%3At.me+%22{requests.utils.quote(clean)}%22+OR+%22{requests.utils.quote(e164)}%22",
             "links": {
                 "truecaller":  f"https://www.truecaller.com/search/{(region_code or 'global').lower()}/{clean}",
                 "getcontact":  f"https://getcontact.com/en/number/{clean}",
