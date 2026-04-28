@@ -347,6 +347,7 @@ def analyze_phone(number: str) -> dict:
 
     # Enriquecimiento
     nv_data      = _numverify(e164)
+    national_digits = re.sub(r'\D', '', national)
     tc_api       = _rapidapi_truecaller(re.sub(r'\D', '', national), alpha)
     tc_web       = _scrape_truecaller_web(clean, alpha) if not tc_api.get("name") else {}
     spam_data    = _scrape_spamcalls(clean)
@@ -387,6 +388,13 @@ def analyze_phone(number: str) -> dict:
     if line_type_str in ("Número Gratuito", "Tarifa Premium"):
         risk_flags.append(f"Tipo de línea inusual: {line_type_str}")
 
+    spam_type = None
+    if is_reported:
+        spam_type = tc_api.get("spam_type")
+        if not spam_type:
+            labels = spam_data.get("labels") or []
+            spam_type = labels[0] if labels else "Spam"
+
     return {
         # Identificación
         "number":        e164,
@@ -415,8 +423,8 @@ def analyze_phone(number: str) -> dict:
         "spam": {
             "reported":     is_reported,
             "score":        spam_score_final,
-            "type":         tc_api.get("spam_type") or spam_data.get("labels", ["Spam"])[0] if is_reported else None,
-            "labels":       spam_data.get("labels", []),
+            "type":         spam_type,
+            "labels":       spam_data.get("labels") or [],
             "tellows_score": tellows_data.get("score"),
             "caller_type_tellows": tellows_data.get("caller_type"),
             "total_reports": max(spam_data.get("reports", 0), tellows_data.get("reports", 0)),
@@ -441,7 +449,7 @@ def analyze_phone(number: str) -> dict:
 
         # Links OSINT externos
         "osint_links": [
-            {"name": "Truecaller",  "url": f"https://www.truecaller.com/search/{alpha.lower()}/{re.sub(r'D', '', national)}"},
+            {"name": "Truecaller",  "url": f"https://www.truecaller.com/search/{alpha.lower()}/{national_digits}"},
             {"name": "GetContact",  "url": f"https://getcontact.com/en/number/{clean}"},
             {"name": "SpamCalls",   "url": f"https://spamcalls.net/en/number/{clean}"},
             {"name": "Tellows",     "url": f"https://www.tellows.com/num/{clean}"},
