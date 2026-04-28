@@ -35,7 +35,12 @@ IS_CLOUD = bool(
     os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("RENDER") or
     os.getenv("FLY_APP_NAME") or os.getenv("HEROKU_APP_NAME") or os.getenv("PORT")
 )
-WEBHOOK_URL      = os.getenv("WEBHOOK_URL", "")
+_RAW_WEBHOOK_URL = (os.getenv("WEBHOOK_URL", "") or "").strip()
+if not _RAW_WEBHOOK_URL:
+    _RAW_WEBHOOK_URL = (PUBLIC_URL or os.getenv("KOYEB_PUBLIC_DOMAIN", "") or "").strip()
+if _RAW_WEBHOOK_URL and not _RAW_WEBHOOK_URL.startswith(("http://", "https://")):
+    _RAW_WEBHOOK_URL = "https://" + _RAW_WEBHOOK_URL.lstrip("/")
+WEBHOOK_URL      = _RAW_WEBHOOK_URL.rstrip("/")
 PORT             = int(os.getenv("PORT", 8443))
 FILE_SERVER_PORT = int(os.getenv("FILE_SERVER_PORT", 8000))
 KEEP_ALIVE_URL   = PUBLIC_URL or os.getenv("KOYEB_PUBLIC_DOMAIN", "")
@@ -82,10 +87,16 @@ def main():
         sys.exit(1)
 
     env_name = "Cloud" if IS_CLOUD else ("Windows" if sys.platform == "win32" else "Linux/Mac")
+    use_webhook = bool(IS_CLOUD and WEBHOOK_URL)
 
     if IS_CLOUD:
-        start_file_server(PORT, PAGES_DIR)
-        start_keep_alive(KEEP_ALIVE_URL)
+        if not use_webhook:
+            start_file_server(PORT, PAGES_DIR)
+        keep_url = (KEEP_ALIVE_URL or "").strip()
+        if keep_url and not keep_url.startswith(("http://", "https://")):
+            keep_url = "https://" + keep_url.lstrip("/")
+        if keep_url:
+            start_keep_alive(keep_url)
     else:
         start_file_server(FILE_SERVER_PORT, PAGES_DIR)
 
@@ -95,7 +106,7 @@ def main():
     print(f"[*]  Bot listo — usa /start en Telegram")
     print("     (Ctrl+C para detener)\n")
 
-    if IS_CLOUD and WEBHOOK_URL:
+    if use_webhook:
         logger.info(f"Modo Webhook en puerto {PORT}")
         print(f"[*] Modo: Webhook — {WEBHOOK_URL}")
         app.run_webhook(
@@ -108,6 +119,10 @@ def main():
     else:
         logger.info("Modo Long Polling")
         print("[*] Modo: Long Polling")
+        try:
+            asyncio.run(app.bot.delete_webhook(drop_pending_updates=True))
+        except Exception:
+            pass
         app.run_polling(
             allowed_updates=Update.ALL_TYPES,
             drop_pending_updates=True,
