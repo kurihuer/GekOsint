@@ -33,46 +33,116 @@ HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 }
 
+async def _verify_url_serves_html(url: str, expect_html: bool = True) -> bool:
+    """
+    Verifica con HEAD (con fallback a GET) que la URL devuelva 200.
+    También chequea Content-Type, pero de forma conservadora:
+      - Rechaza tipos claramente NO-HTML (image/*, video/*, audio/*).
+      - Acepta text/html, application/xhtml+xml, text/plain, octet-stream
+        y respuestas SIN Content-Type (Catbox, 0x0.st a veces).
+    Esto evita devolver URLs muertas (404) sin descartar deployers que
+    sí sirven HTML aunque con un Content-Type imperfecto.
+    """
+    if not url:
+        return False
+    try:
+        async with httpx.AsyncClient(
+            timeout=10.0, follow_redirects=True, headers=HEADERS
+        ) as client:
+            r = await client.head(url)
+            # Algunos hosts (Catbox, 0x0) no soportan HEAD bien → reintentar con GET
+            if r.status_code in (405, 501) or r.status_code >= 400:
+                r = await client.get(url)
+            if r.status_code != 200:
+                logger.warning(f"verify_url: {url} → HTTP {r.status_code}")
+                return False
+            if expect_html:
+                ctype = (r.headers.get("content-type") or "").lower().strip()
+                bad_prefixes = ("image/", "video/", "audio/", "application/pdf",
+                                "application/zip", "application/json")
+                if any(ctype.startswith(p) for p in bad_prefixes):
+                    logger.warning(f"verify_url: {url} → content-type rechazado {ctype!r}")
+                    return False
+            return True
+    except Exception as e:
+        logger.warning(f"verify_url: {url} → {e}")
+        return False
+
+
 async def deploy_html(html_content, filename="index.html"):
     """
     Sube HTML usando múltiples servicios con fallback automático.
     Orden: Servidor Local -> GitHub Gist -> Vercel -> Catbox -> 0x0.st
+
+    Cada deployer es validado con HEAD/GET antes de devolverse al usuario,
+    así nunca se envía un enlace que dé 404.
     """
     # Guardar localmente siempre
     filepath = os.path.join(PAGES_DIR, filename)
     with open(filepath, 'w', encoding='utf-8') as f:
         f.write(html_content)
-    logger.info(f"✅ Archivo guardado: {filepath}")
-    
+    logger.info(f"📁 Archivo guardado: {filepath}")
+
     # Intentar cada servicio en orden
     deployers = [
         ("Servidor Local", _deploy_local),
-        ("GitHub Gist", _deploy_gist),
-        ("Vercel", _deploy_vercel),
-        ("Catbox", _deploy_catbox),
-        ("0x0.st", _deploy_0x0),
+        ("GitHub Gist",    _deploy_gist),
+        ("Vercel",         _deploy_vercel),
+        ("Catbox",         _deploy_catbox),
+        ("0x0.st",         _deploy_0x0),
     ]
-    
+
+    last_unverified = None  # último candidato que devolvió URL pero no verificó
+
     for name, deployer in deployers:
         try:
             url = await deployer(html_content, filename)
-            if url:
-                logger.info(f"✅ Deploy exitoso via {name}: {url}")
+            if not url:
+                continue
+
+            if await _verify_url_serves_html(url):
+                logger.info(f"✅ Deploy verificado via {name}: {url}")
                 return url
+
+            logger.warning(f"⚠️ {name} devolvió {url} pero no sirve HTML — probando siguiente")
+            last_unverified = (name, url)
         except Exception as e:
             logger.warning(f"⚠️ {name} falló: {e}")
             continue
-    
-    logger.error("❌ Todos los servicios de deploy fallaron")
+
+    if last_unverified:
+        logger.error(
+            f"❌ Ningún deploy verificó. Último intento sin validar: "
+            f"{last_unverified[0]} → {last_unverified[1]}"
+        )
+    else:
+        logger.error("❌ Todos los servicios de deploy fallaron")
     return None
 
+
 async def _deploy_local(html_content, filename):
-    """Sirve el archivo desde el propio servidor del bot (requiere PUBLIC_URL)."""
+    """
+    Sirve el archivo desde el propio servidor del bot.
+    Requisitos:
+      - PUBLIC_URL configurado.
+      - File server local activo (utils/server.is_file_server_running()).
+        Esto evita devolver URLs muertas cuando el bot está en modo webhook
+        sin un file server detrás.
+    """
     try:
         from config import PUBLIC_URL
         if not PUBLIC_URL:
             return None
-        return f"{PUBLIC_URL}/{filename}"
+        # Importación tardía para evitar ciclos al importar utils/apis.py
+        try:
+            from utils.server import is_file_server_running
+            if not is_file_server_running():
+                logger.debug("_deploy_local: file server no activo → skip")
+                return None
+        except Exception:
+            # Si no podemos consultar el estado, mejor no arriesgar
+            return None
+        return f"{PUBLIC_URL.rstrip('/')}/{filename}"
     except Exception:
         return None
 
