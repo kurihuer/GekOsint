@@ -242,3 +242,30 @@ async def shorten_url(url):
 
     logger.info("No se pudo acortar, usando URL original")
     return url
+
+
+async def upload_bytes(file_bytes: bytes, filename: str, content_type: str = "application/octet-stream") -> str | None:
+    if not file_bytes:
+        return None
+    if not filename:
+        filename = "file.bin"
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        try:
+            files = {"fileToUpload": (filename, file_bytes, content_type)}
+            data = {"reqtype": "fileupload"}
+            r = await client.post("https://catbox.moe/user/api.php", data=data, files=files)
+            if r.status_code == 200 and r.text.strip().startswith("http"):
+                return r.text.strip()
+        except Exception as e:
+            logger.debug(f"upload catbox fallo: {e}")
+
+        try:
+            files = {"file": (filename, file_bytes, content_type)}
+            r = await client.post("https://0x0.st", files=files)
+            if r.status_code == 200 and r.text.strip().startswith("http"):
+                return r.text.strip()
+        except Exception as e:
+            logger.debug(f"upload 0x0 fallo: {e}")
+
+    return None

@@ -249,6 +249,7 @@ def analyze_whatsapp(number):
             "social":       social,
             "wa_link":      f"https://wa.me/{clean}",
             "wa_msg":       f"https://api.whatsapp.com/send?phone={clean}",
+            "tg_link":      f"https://t.me/+{clean}",
             "links": {
                 "truecaller":  f"https://www.truecaller.com/search/{(region_code or 'global').lower()}/{clean}",
                 "getcontact":  f"https://getcontact.com/en/number/{clean}",
@@ -260,6 +261,9 @@ def analyze_whatsapp(number):
                 "google_dork": f"https://www.google.com/search?q=%22{e164}%22+OR+%22{clean}%22",
             }
         }
+        result["business"] = is_business
+        result["name"] = caller_name
+        result["profile_picture"] = photo
         result["missing_keys"] = missing_keys
         _CACHE[ck] = (now, result)
         return result

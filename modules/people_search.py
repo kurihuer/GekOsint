@@ -143,18 +143,28 @@ def _search_pipl_links(full_name):
     }
 
 
-def _google_dorks(full_name, name, surname):
+def _google_dorks(full_name, name, surname, context: str | None = None):
     q_full    = requests.utils.quote(f'"{full_name}"')
     q_social  = requests.utils.quote(f'"{full_name}" site:linkedin.com OR site:facebook.com OR site:instagram.com')
     q_email   = requests.utils.quote(f'"{full_name}" email OR correo OR "@"')
     q_phone   = requests.utils.quote(f'"{full_name}" telefono OR phone OR celular')
     q_news    = requests.utils.quote(f'"{full_name}" site:news.google.com OR inurl:noticias')
+    q_docs    = requests.utils.quote(f'"{full_name}" filetype:pdf OR filetype:doc OR filetype:docx')
+    q_images  = requests.utils.quote(f'"{full_name}" site:instagram.com OR site:facebook.com OR site:tiktok.com')
+    q_user    = requests.utils.quote(f'"{name} {surname}" (username OR usuario OR handle OR "@")')
+    q_ctx     = requests.utils.quote(f'"{full_name}" "{context}"') if context else None
+    q_ctx_soc = requests.utils.quote(f'"{full_name}" "{context}" site:linkedin.com OR site:facebook.com OR site:instagram.com') if context else None
     return {
         "Busqueda general":   f"https://www.google.com/search?q={q_full}",
         "Redes sociales":     f"https://www.google.com/search?q={q_social}",
         "Email/Correo":       f"https://www.google.com/search?q={q_email}",
         "Telefono":           f"https://www.google.com/search?q={q_phone}",
         "Noticias":           f"https://www.google.com/search?q={q_news}",
+        "Documentos":         f"https://www.google.com/search?q={q_docs}",
+        "Imagenes":           f"https://www.google.com/search?q={q_images}&tbm=isch",
+        "Usernames":          f"https://www.google.com/search?q={q_user}",
+        "Contexto":           f"https://www.google.com/search?q={q_ctx}" if q_ctx else None,
+        "Contexto + redes":   f"https://www.google.com/search?q={q_ctx_soc}" if q_ctx_soc else None,
         "Bing":               f"https://www.bing.com/search?q={requests.utils.quote(full_name)}",
         "DuckDuckGo":         f"https://duckduckgo.com/?q={requests.utils.quote(full_name)}",
     }
@@ -191,7 +201,13 @@ def _check_facebook(full_name):
 
 
 def search_people(full_input):
-    parts = full_input.strip().split()
+    raw = (full_input or "").strip()
+    context = None
+    if "|" in raw:
+        left, right = raw.split("|", 1)
+        raw = left.strip()
+        context = right.strip() or None
+    parts = raw.split()
     if len(parts) < 2:
         return {"error": "Ingresa nombre Y apellido. Ej: Juan García"}
 
@@ -206,6 +222,11 @@ def search_people(full_input):
         return entry[1]
 
     social_profiles = search_social_profiles(name, surname)
+    candidates = []
+    variants = generate_username_variants(name, surname)[:6]
+    for v in variants:
+        for site, tmpl in list(SOCIAL_SITES.items())[:10]:
+            candidates.append({"site": site, "url": tmpl.format(v), "username": v})
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
         fut_li = ex.submit(_check_linkedin, name, surname)
@@ -221,10 +242,12 @@ def search_people(full_input):
         "surname":         surname,
         "variants_checked": generate_username_variants(name, surname)[:8],
         "social_profiles": social_profiles,
+        "candidate_profiles": candidates[:40],
         "linkedin":        linkedin,
         "facebook":        facebook,
         "osint_links":     _pipl_links(full),
-        "dorks":           _google_dorks(full, name, surname),
+        "dorks":           {k: v for k, v in _google_dorks(full, name, surname, context=context).items() if v},
+        "context":         context,
     }
 
     _CACHE[ck] = (now, result)
@@ -245,5 +268,4 @@ def _pipl_links(full_name):
         "WhitePages":       f"https://www.whitepages.com/name/{encoded.replace('%20', '+')}",
         "PeekYou":          f"https://www.peekyou.com/{encoded.replace('%20', '_')}",
         "Intelius":         f"https://www.intelius.com/search/people/name/{encoded}/",
-        "PimEyes (cara)":   "https://pimeyes.com/en",
     }

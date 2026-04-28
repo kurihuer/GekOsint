@@ -21,7 +21,7 @@ from modules.geolocation import (
     get_ip_geolocation, scan_wifi_networks,
     check_webrtc_leak, extract_google_maps_location
 )
-from utils.apis import deploy_html, shorten_url, generate_text_report
+from utils.apis import deploy_html, shorten_url, generate_text_report, upload_bytes
 from utils.access import load_authorized_users, add_user, remove_user, get_all_users
 from utils.rate_limit import check_rate_limit
 from utils.parse import extract_phone_and_target
@@ -426,6 +426,7 @@ async def document_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         from io import BytesIO
+        import mimetypes
         if update.message.document:
             file_obj = await update.message.document.get_file()
         elif update.message.photo:
@@ -436,7 +437,27 @@ async def document_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         out = BytesIO()
         await file_obj.download_to_memory(out)
-        data     = await asyncio.to_thread(get_exif, out.getvalue())
+        img_bytes = out.getvalue()
+        data      = await asyncio.to_thread(get_exif, img_bytes)
+
+        filename = None
+        mime_type = None
+        if update.message.document:
+            filename = (update.message.document.file_name or "").strip() or None
+            mime_type = (update.message.document.mime_type or "").strip() or None
+
+        if not filename:
+            md5 = (data.get("hash") or {}).get("MD5") or "image"
+            filename = f"exif_{md5}.jpg"
+
+        if not mime_type:
+            guessed, _ = mimetypes.guess_type(filename)
+            mime_type = guessed or "application/octet-stream"
+
+        image_url = await upload_bytes(img_bytes, filename=filename, content_type=mime_type)
+        if image_url:
+            data["image_url"] = image_url
+
         response = format_exif_result(data)
 
         context.user_data["last_result"] = response

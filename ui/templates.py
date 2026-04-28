@@ -4,6 +4,8 @@ Formateadores de resultados para Telegram (HTML parse_mode).
 Cada función recibe un dict y retorna un string HTML listo para enviar.
 """
 
+import urllib.parse
+
 
 # ── Helpers de presentación ───────────────────────────────────────────────────
 
@@ -403,6 +405,23 @@ def format_exif_result(data: dict) -> str:
     else:
         txt += "\n📡 Sin datos GPS en esta imagen.\n"
 
+    h = data.get("hash", {})
+    if h:
+        txt += render_section("HUELLAS (HASH)")
+        if h.get("MD5"):
+            txt += f"MD5: <code>{h['MD5']}</code>\n"
+        if h.get("SHA256"):
+            txt += f"SHA256: <code>{h['SHA256']}</code>\n"
+
+    image_url = data.get("image_url")
+    if image_url:
+        enc = urllib.parse.quote(image_url, safe="")
+        txt += render_section("BÚSQUEDA POR IMAGEN")
+        txt += f"<a href='https://lens.google.com/uploadbyurl?url={enc}'>Google Lens</a>"
+        txt += f" | <a href='https://yandex.com/images/search?rpt=imageview&url={enc}'>Yandex Images</a>"
+        txt += f" | <a href='https://tineye.com/search?url={enc}'>TinEye</a>"
+        txt += f" | <a href='https://www.bing.com/images/search?q=imgurl:{enc}&view=detailv2&iss=sbi'>Bing Visual Search</a>\n"
+
     all_tags = data.get("all_tags", {})
     if all_tags and len(all_tags) > 5:
         txt += render_section(f"TODOS LOS METADATOS ({len(all_tags)} tags)")
@@ -424,7 +443,9 @@ def format_whatsapp_result(data: dict) -> str:
         return f"❌ {data.get('error', 'Error desconocido')}"
 
     txt = render_header("WHATSAPP OSINT")
-    txt += f"💚 <b>Número:</b> <code>{data.get('number', 'N/A')}</code>\n\n"
+    txt += f"💚 <b>Número:</b> <code>{data.get('number', 'N/A')}</code>\n"
+    txt += render_missing_keys(data)
+    txt += "\n"
 
     reg = data.get("registered")
     if reg is True:
@@ -434,15 +455,27 @@ def format_whatsapp_result(data: dict) -> str:
     else:
         txt += "⚠️ <b>Estado desconocido</b>\n"
 
-    if data.get("business"):
+    if data.get("business") or data.get("is_business"):
         txt += "🏢 <b>Cuenta Business detectada</b>\n"
 
-    if data.get("name"):
-        txt += f"👤 <b>Nombre registrado:</b> {data['name']}\n"
+    name = data.get("name") or data.get("caller_name")
+    if name:
+        txt += f"👤 <b>Nombre:</b> {name}\n"
+        src = data.get("caller_source")
+        if src:
+            txt += f"ℹ️ <i>Fuente:</i> {src}\n"
 
-    if data.get("profile_picture"):
+    if data.get("country") or data.get("carrier"):
+        txt += render_section("TELÉFONO (OFFLINE)")
+        if data.get("country"):
+            txt += f"🌍 <b>Región/País:</b> {data.get('country')}\n"
+        if data.get("carrier"):
+            txt += f"📡 <b>Operadora:</b> {data.get('carrier')}\n"
+
+    photo = data.get("profile_picture") or data.get("photo")
+    if photo:
         txt += render_section("FOTO DE PERFIL")
-        txt += f"🖼️ <a href='{data['profile_picture']}'>Ver foto de perfil</a>\n"
+        txt += f"🖼️ <a href='{photo}'>Ver foto de perfil</a>\n"
     else:
         txt += "\n🖼️ <b>Foto de perfil:</b> Privada o no disponible\n"
 
@@ -464,6 +497,8 @@ def format_whatsapp_result(data: dict) -> str:
     txt += render_section("CONTACTO DIRECTO")
     txt += f"<a href='{data['wa_link']}'>Abrir perfil</a> | "
     txt += f"<a href='{data['wa_msg']}'>Enviar mensaje</a>\n"
+    if data.get("tg_link"):
+        txt += f"<a href='{data['tg_link']}'>Telegram por número</a>\n"
 
     links = data.get("links", {})
     _lmap = {
@@ -544,6 +579,8 @@ def format_people_result(data: dict) -> str:
 
     txt  = render_header("PEOPLE SEARCH")
     txt += f"🧑 <b>Objetivo:</b> <code>{data['full_name']}</code>\n\n"
+    if data.get("context"):
+        txt += f"📌 <b>Contexto:</b> <code>{data['context']}</code>\n\n"
 
     variants = data.get("variants_checked", [])
     if variants:
@@ -563,6 +600,12 @@ def format_people_result(data: dict) -> str:
     else:
         txt += render_section("PERFILES SOCIALES")
         txt += "Sin perfiles encontrados con las variantes generadas.\n"
+        cands = data.get("candidate_profiles", [])
+        if cands:
+            txt += render_section("POSIBLES USERNAMES (NO VERIFICADOS)")
+            for p in cands[:10]:
+                txt += f"🔗 <b>{p['site']}</b> — @{p['username']}\n"
+                txt += f"   <a href='{p['url']}'>{p['url']}</a>\n"
 
     li = data.get("linkedin", {})
     if li.get("found"):
@@ -573,13 +616,13 @@ def format_people_result(data: dict) -> str:
     dorks = data.get("dorks", {})
     if dorks:
         txt += render_section("BÚSQUEDAS RECOMENDADAS")
-        for label, url in list(dorks.items())[:5]:
+        for label, url in list(dorks.items())[:10]:
             txt += f"🔎 <a href='{url}'>{label}</a>\n"
 
     osint = data.get("osint_links", {})
     if osint:
         txt += render_section("BASES DE DATOS OSINT")
-        for site, url in list(osint.items())[:6]:
+        for site, url in list(osint.items())[:10]:
             txt += f"📋 <a href='{url}'>{site}</a>\n"
 
     txt += "\n<i>⚠️ Uso exclusivamente para investigación ética y legal.</i>"
