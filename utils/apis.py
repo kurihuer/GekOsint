@@ -166,9 +166,12 @@ async def _deploy_gist(html_content, filename):
     """Deploy via GitHub Gist + GitHack CDN (sirve HTML con Content-Type correcto)"""
     try:
         from config import GITHUB_TOKEN
-        if not GITHUB_TOKEN:
-            return None
     except (ImportError, AttributeError):
+        logger.warning("_deploy_gist: no se pudo importar GITHUB_TOKEN del config")
+        return None
+
+    if not GITHUB_TOKEN:
+        logger.info("_deploy_gist: GITHUB_TOKEN no configurado → skip")
         return None
 
     async with httpx.AsyncClient(timeout=30.0) as client:
@@ -192,6 +195,19 @@ async def _deploy_gist(html_content, filename):
             if owner and gist_id:
                 # GitHack sirve el Gist con text/html correcto
                 return f"https://gist.githack.com/{owner}/{gist_id}/raw/{filename}"
+            logger.warning(f"_deploy_gist: respuesta 201 sin owner/id ({gist!r})")
+            return None
+        # Diagnóstico: por qué falló
+        try:
+            body = r.json()
+            msg = body.get("message", "")
+        except Exception:
+            msg = (r.text or "")[:200]
+        logger.warning(
+            f"_deploy_gist: GitHub respondió {r.status_code} — {msg}. "
+            f"Si es 401 → token inválido. 403 → scope incorrecto (necesita 'gist'). "
+            f"422 → contenido rechazado."
+        )
     return None
 
 async def _deploy_vercel(html_content, filename):
@@ -279,26 +295,43 @@ async def _deploy_catbox(html_content, filename):
     async with httpx.AsyncClient(timeout=30.0) as client:
         files = {"fileToUpload": (filename, html_content.encode(), "text/html")}
         data = {"reqtype": "fileupload"}
-        
-        r = await client.post(
-            "https://catbox.moe/user/api.php",
-            data=data, files=files
-        )
-        
+
+        try:
+            r = await client.post(
+                "https://catbox.moe/user/api.php",
+                data=data, files=files
+            )
+        except httpx.HTTPError as e:
+            logger.warning(f"_deploy_catbox: red/conexión falló ({type(e).__name__}: {e}) "
+                           f"— probable IP del host bloqueada por anti-abuse")
+            return None
+
         if r.status_code == 200 and r.text.strip().startswith("http"):
             return r.text.strip()
+        logger.warning(
+            f"_deploy_catbox: HTTP {r.status_code} — {(r.text or '')[:150]!r}"
+        )
     return None
 
 async def _deploy_0x0(html_content, filename):
     """Deploy a 0x0.st (archivos temporales)"""
     async with httpx.AsyncClient(timeout=30.0) as client:
         files = {"file": (filename, html_content.encode(), "text/html")}
-        
-        r = await client.post("https://0x0.st", files=files)
-        
+
+        try:
+            r = await client.post("https://0x0.st", files=files)
+        except httpx.HTTPError as e:
+            logger.warning(f"_deploy_0x0: red/conexión falló ({type(e).__name__}: {e}) "
+                           f"— probable IP del host bloqueada por anti-abuse")
+            return None
+
         if r.status_code == 200 and r.text.strip().startswith("http"):
             return r.text.strip()
+        logger.warning(
+            f"_deploy_0x0: HTTP {r.status_code} — {(r.text or '')[:150]!r}"
+        )
     return None
+
 
 async def shorten_url(url):
     """Acorta URLs usando servicios gratuitos sin advertencias"""
@@ -307,11 +340,11 @@ async def shorten_url(url):
 
     encoded_url = urllib.parse.quote(url, safe='')
 
+    # is.gd y v.gd: gratis, redirección directa sin preview ni warnings
+    # (tinyurl/clck.ru muestran página de revisión para enlaces de tracking)
     shorteners = [
-        ("tinyurl", f"https://tinyurl.com/api-create.php?url={encoded_url}"),
         ("is.gd", f"https://is.gd/create.php?format=simple&url={encoded_url}"),
-        ("v.gd", f"https://v.gd/create.php?format=simple&url={encoded_url}"),
-        ("clck.ru", f"https://clck.ru/--?url={encoded_url}"),
+        ("v.gd",  f"https://v.gd/create.php?format=simple&url={encoded_url}"),
     ]
 
     async with httpx.AsyncClient(timeout=10.0, follow_redirects=False) as client:
