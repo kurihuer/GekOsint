@@ -32,6 +32,9 @@ def main_menu():
             InlineKeyboardButton("📘 FB OSINT", callback_data='menu_fb')
         ],
         [
+            InlineKeyboardButton("📨 Email Recon (multi-plataforma)", callback_data='menu_emailrecon')
+        ],
+        [
             InlineKeyboardButton("ℹ️ Acerca de", callback_data='menu_about')
         ]
     ]

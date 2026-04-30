@@ -1114,3 +1114,46 @@ def format_fb_osint(data: dict) -> str:
             out.append(f"<i>⚠️ {e}</i>")
 
     return "\n".join(out)
+
+
+def format_email_recon(data: dict) -> str:
+    """Formatea el resultado de modules.email_recon.email_recon()."""
+    out: list[str] = []
+    out.append(f"📨 <b>Email Multi-Platform Recon — {data.get('input', '?')}</b>")
+    out.append("━━━━━━━━━━━━━━━━━━━━━━━━")
+
+    if not data.get("valid"):
+        for e in data.get("errors", []):
+            out.append(f"❌ {e}")
+        return "\n".join(out)
+
+    found = data.get("found_in") or []
+    checked = data.get("checked") or []
+
+    out.append(f"🔍 Chequeado contra <b>{len(checked)} servicios</b>")
+    out.append(f"✅ Encontrado en: <b>{len(found)}</b>\n")
+
+    if found:
+        out.append("📍 <b>Servicios donde el email está registrado</b>")
+        for entry in found:
+            line = f"   ▪️ <b>{entry['service']}</b>"
+            if entry.get("hint"):
+                line += f" — <code>{entry['hint']}</code>"
+            out.append(line)
+        out.append("")
+
+    if data.get("hints"):
+        out.append("🎯 <b>Hints adicionales</b>")
+        for h in data["hints"]:
+            out.append(f"   ▪️ {h}")
+        out.append("")
+
+    if not found:
+        out.append("ℹ️ <i>Email no detectado en los servicios chequeados.</i>")
+        out.append("   <i>Puede ser cuenta nueva o servicios no cubiertos.</i>")
+
+    not_found = [s for s in checked if not any(f["service"] == s for f in found)]
+    if not_found:
+        out.append(f"\n<i>No registrado en: {', '.join(not_found)}</i>")
+
+    return "\n".join(out)

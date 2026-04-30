@@ -9,6 +9,7 @@ from ui.templates import (
     format_geoloc_coords, format_geoloc_ip, format_geoloc_webrtc, format_wifi_scan,
     format_github_recon, format_ig_osint,
     format_gmail_osint, format_fb_osint,
+    format_email_recon,
 )
 from modules.ip_lookup import get_ip_info
 from modules.phone_lookup import analyze_phone
@@ -27,6 +28,7 @@ from modules.github_recon import github_recon
 from modules.ig_osint import ig_lookup, check_ig_rate_limit
 from modules.gmail_osint import gmail_lookup, check_gmail_rate_limit
 from modules.fb_osint import fb_lookup, check_fb_rate_limit
+from modules.email_recon import email_recon, check_email_recon_rate_limit
 from utils.apis import deploy_html, shorten_url, generate_text_report, upload_bytes
 from utils.access import load_authorized_users, add_user, remove_user, get_all_users
 from utils.rate_limit import check_rate_limit
@@ -132,11 +134,24 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     cmd = args[0].lower()
     if cmd == "add" and len(args) > 1:
+        if not args[1].isdigit():
+            await update.message.reply_text(
+                f"❌ El ID debe ser numérico. Recibí: <code>{args[1]}</code>\n\n"
+                f"Uso: <code>/admin add 123456789</code>",
+                parse_mode="HTML",
+            )
+            return
         if add_user(args[1]):
             await update.message.reply_text(f"✅ Usuario <code>{args[1]}</code> añadido.", parse_mode="HTML")
         else:
             await update.message.reply_text("❌ Error al añadir usuario.")
     elif cmd == "remove" and len(args) > 1:
+        if not args[1].isdigit():
+            await update.message.reply_text(
+                f"❌ El ID debe ser numérico. Recibí: <code>{args[1]}</code>",
+                parse_mode="HTML",
+            )
+            return
         if remove_user(args[1]):
             await update.message.reply_text(f"✅ Usuario <code>{args[1]}</code> eliminado.", parse_mode="HTML")
         else:
@@ -334,6 +349,18 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "⏳ <i>FB es estricto — rate limit: 1/90s, 15/hora. "
             "Si nos rate-limitea, pausa global de 45 min.</i>"
         ),
+        "menu_emailrecon": (
+            "📨 <b>Email Multi-Platform Recon</b>\n\n"
+            "Envía cualquier email:\n\n"
+            "<code>persona@gmail.com</code>\n"
+            "<code>contacto@empresa.com</code>\n\n"
+            "🔍 Chequea contra <b>~12 servicios</b> en paralelo "
+            "(X/Twitter, Microsoft, Apple, Spotify, Adobe, Pinterest, "
+            "GitHub, Duolingo, Imgur, Strava, LastPass, Proton).\n\n"
+            "Reporta dónde está registrado el email y, en algunos servicios, "
+            "extrae <b>hints adicionales</b> como username público asociado.\n\n"
+            "⏳ <i>Rate limit suave: 1/30s, 30/hora.</i>"
+        ),
     }
 
     if data in _prompts:
@@ -434,6 +461,16 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 data = await fb_lookup(text.strip())
                 response = format_fb_osint(data)
+
+        elif mode == "menu_emailrecon":
+            allowed, reason = check_email_recon_rate_limit(update.effective_user.id)
+            if not allowed:
+                response = (
+                    f"⏳ <b>Email Recon — rate limit</b>\n\n{reason}"
+                )
+            else:
+                data = await email_recon(text.strip())
+                response = format_email_recon(data)
 
         elif mode == "menu_geoloc":
             clean = text.strip()
