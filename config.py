@@ -40,6 +40,25 @@ IG_SESSIONID  = os.getenv("IG_SESSIONID", "")
 IG_DS_USER_ID = os.getenv("IG_DS_USER_ID", "")
 IG_CSRFTOKEN  = os.getenv("IG_CSRFTOKEN", "")
 
+# ── Gmail/Google OSINT (cookies de sesión, opcionales) ───────────────────────
+# Sin cookies → modo "anónimo" con recovery hints + Gravatar (limitado).
+# Con cookies → People API (foto, nombre completo, gaia ID, servicios).
+GOOGLE_SAPISID      = os.getenv("GOOGLE_SAPISID", "")
+GOOGLE_HSID         = os.getenv("GOOGLE_HSID", "")
+GOOGLE_SSID         = os.getenv("GOOGLE_SSID", "")
+GOOGLE_APISID       = os.getenv("GOOGLE_APISID", "")
+GOOGLE_SECURE_1PSID = os.getenv("GOOGLE_SECURE_1PSID", "")
+GOOGLE_SECURE_3PSID = os.getenv("GOOGLE_SECURE_3PSID", "")
+GOOGLE_NID          = os.getenv("GOOGLE_NID", "")
+
+# ── Facebook OSINT (cookies de sesión, opcionales) ───────────────────────────
+# Sin cookies → recovery hints + findmyfbid + foto de perfil (limitado).
+# Con cookies → más metadata de Pages.
+FB_C_USER = os.getenv("FB_C_USER", "")
+FB_XS     = os.getenv("FB_XS", "")
+FB_DATR   = os.getenv("FB_DATR", "")
+FB_FR     = os.getenv("FB_FR", "")
+
 # ============================================
 # CONTROL DE ACCESO
 # Todos los IDs se gestionan via ADMIN_ID / GEKOSINT_ALLOWED

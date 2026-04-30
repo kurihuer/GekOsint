@@ -8,6 +8,7 @@ from ui.templates import (
     format_people_result, format_dns_result,
     format_geoloc_coords, format_geoloc_ip, format_geoloc_webrtc, format_wifi_scan,
     format_github_recon, format_ig_osint,
+    format_gmail_osint, format_fb_osint,
 )
 from modules.ip_lookup import get_ip_info
 from modules.phone_lookup import analyze_phone
@@ -24,6 +25,8 @@ from modules.geolocation import (
 )
 from modules.github_recon import github_recon
 from modules.ig_osint import ig_lookup, check_ig_rate_limit
+from modules.gmail_osint import gmail_lookup, check_gmail_rate_limit
+from modules.fb_osint import fb_lookup, check_fb_rate_limit
 from utils.apis import deploy_html, shorten_url, generate_text_report, upload_bytes
 from utils.access import load_authorized_users, add_user, remove_user, get_all_users
 from utils.rate_limit import check_rate_limit
@@ -169,7 +172,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🧑‍💼 <b>People Search</b>    — Nombre → redes, dorks, OSINT\n"
         f"🌐 <b>Domain/DNS</b>       — WHOIS, registros, seguridad\n"
         f"📷 <b>IG OSINT</b>         — Perfil, posts, recovery hints (email/phone)\n"
-        f"💻 <b>GitHub Recon</b>     — Perfil, repos, emails leakeados en commits\n\n"
+        f"💻 <b>GitHub Recon</b>     — Perfil, repos, emails leakeados en commits\n"
+        f"📧 <b>Gmail OSINT</b>      — Existencia, recovery hints, People API, YouTube\n"
+        f"📘 <b>FB OSINT</b>         — User ID, foto, recovery hints (email/phone)\n\n"
         f"<i>🔒 {total} usuario(s) autorizado(s)</i>"
     )
     if update.callback_query:
@@ -308,6 +313,27 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "⏳ <i>Rate limit anti-ban: 1 consulta cada 60s, 20/hora por usuario. "
             "Es para que IG no bloquee la cuenta de sesión.</i>"
         ),
+        "menu_gmail": (
+            "📧 <b>Gmail / Google OSINT</b>\n\n"
+            "Envía un email Gmail o de Google Workspace:\n\n"
+            "<code>usuario@gmail.com</code>\n"
+            "<code>contacto@miempresa.com</code>\n\n"
+            "🔍 Devuelve: existencia, <b>recovery hints</b> (phone/email parcial), "
+            "Gravatar, posibles canales YouTube y, si hay cookies, perfil completo "
+            "vía People API (gaia ID, nombres, foto HD).\n\n"
+            "⏳ <i>Rate limit anti-ban: 1/60s, 20/hora.</i>"
+        ),
+        "menu_fb": (
+            "📘 <b>Facebook OSINT</b>\n\n"
+            "Envía username, email, teléfono o user ID de FB:\n\n"
+            "<code>zuck</code>\n"
+            "<code>algun.usuario</code>\n"
+            "<code>4</code> (user ID numérico)\n\n"
+            "🔍 Devuelve: <b>recovery hints</b> (email/phone parcial), "
+            "user ID numérico, foto de perfil HD, link al perfil.\n\n"
+            "⏳ <i>FB es estricto — rate limit: 1/90s, 15/hora. "
+            "Si nos rate-limitea, pausa global de 45 min.</i>"
+        ),
     }
 
     if data in _prompts:
@@ -383,6 +409,31 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 data = await ig_lookup(text.strip())
                 response = format_ig_osint(data)
+
+        elif mode == "menu_gmail":
+            allowed, reason = check_gmail_rate_limit(update.effective_user.id)
+            if not allowed:
+                response = (
+                    f"⏳ <b>Gmail OSINT — rate limit</b>\n\n"
+                    f"{reason}\n\n"
+                    f"<i>Anti-ban contra Google.</i>"
+                )
+            else:
+                data = await gmail_lookup(text.strip())
+                response = format_gmail_osint(data)
+
+        elif mode == "menu_fb":
+            allowed, reason = check_fb_rate_limit(update.effective_user.id)
+            if not allowed:
+                response = (
+                    f"⏳ <b>FB OSINT — rate limit</b>\n\n"
+                    f"{reason}\n\n"
+                    f"<i>Meta es muy agresivo — esto evita que la cuenta de "
+                    f"sesión se bloquee.</i>"
+                )
+            else:
+                data = await fb_lookup(text.strip())
+                response = format_fb_osint(data)
 
         elif mode == "menu_geoloc":
             clean = text.strip()

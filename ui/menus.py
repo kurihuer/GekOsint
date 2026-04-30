@@ -28,6 +28,10 @@ def main_menu():
             InlineKeyboardButton("💻 GitHub Recon", callback_data='menu_github')
         ],
         [
+            InlineKeyboardButton("📧 Gmail OSINT", callback_data='menu_gmail'),
+            InlineKeyboardButton("📘 FB OSINT", callback_data='menu_fb')
+        ],
+        [
             InlineKeyboardButton("ℹ️ Acerca de", callback_data='menu_about')
         ]
     ]

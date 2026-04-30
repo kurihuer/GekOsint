@@ -962,3 +962,134 @@ def format_ig_osint(data: dict) -> str:
             f"Ver perfil en Instagram</a>"
         )
     return "\n".join(out)
+
+
+def format_gmail_osint(data: dict) -> str:
+    """Formatea el resultado de modules.gmail_osint.gmail_lookup()."""
+    out: list[str] = []
+    out.append(f"📧 <b>Gmail / Google OSINT — {data.get('input', '?')}</b>")
+    out.append("━━━━━━━━━━━━━━━━━━━━━━━━")
+    out.append(f"🔐 <i>Sesión: {data.get('session', 'anonymous')}</i>\n")
+
+    if data.get("errors") and not data.get("found"):
+        for e in data["errors"]:
+            out.append(f"⚠️ {e}")
+
+    if not data.get("found"):
+        if data.get("recovery", {}).get("error"):
+            out.append("❌ No se pudo verificar la cuenta.")
+        else:
+            out.append("❌ Cuenta no encontrada o sin datos públicos.")
+        return "\n".join(out)
+
+    rec = data.get("recovery") or {}
+    prof = data.get("profile") or {}
+    pics = data.get("pictures") or {}
+    yt = data.get("youtube") or {}
+
+    # ── Status ───────────────────────────────────────────────────────────────
+    out.append("✅ <b>Cuenta encontrada</b>")
+    flags = []
+    if data.get("is_gmail"):  flags.append("Gmail")
+    elif data.get("is_google"): flags.append("Google Workspace")
+    if flags:
+        out.append(f"   ▪️ Tipo: {' · '.join(flags)}")
+    out.append("")
+
+    # ── Recovery hints (la joya) ─────────────────────────────────────────────
+    if rec.get("obfuscated_phone") or rec.get("obfuscated_email"):
+        out.append("🎯 <b>Recovery hints</b>")
+        if rec.get("obfuscated_phone"):
+            out.append(f"   📱 Phone: <code>{rec['obfuscated_phone']}</code>")
+        if rec.get("obfuscated_email"):
+            out.append(f"   📧 Email recovery: <code>{rec['obfuscated_email']}</code>")
+        out.append("   <i>(Hints parciales del recovery de Google)</i>\n")
+
+    # ── Profile (con cookies) ────────────────────────────────────────────────
+    if prof.get("found"):
+        out.append("👤 <b>Perfil Google</b> (vía People API)")
+        if prof.get("gaia_id"):
+            out.append(f"   ▪️ Google ID: <code>{prof['gaia_id']}</code>")
+        if prof.get("names"):
+            for nm in prof["names"][:3]:
+                nm_safe = nm.replace("<", "&lt;").replace(">", "&gt;")
+                out.append(f"   ▪️ Nombre: <b>{nm_safe}</b>")
+        if prof.get("photo_url"):
+            out.append(f"   ▪️ <a href='{prof['photo_url']}'>Foto de perfil (HD)</a>")
+        out.append("")
+
+    # ── YouTube ──────────────────────────────────────────────────────────────
+    if yt.get("found"):
+        out.append(f"📺 <b>Posibles canales YouTube</b> ({len(yt['channels'])})")
+        for ch in yt["channels"][:3]:
+            out.append(f"   ▪️ <a href='{ch['url']}'>{ch['channel_id']}</a>")
+        out.append("   <i>(Búsqueda heurística por handle del email)</i>\n")
+
+    # ── Pictures (Gravatar) ──────────────────────────────────────────────────
+    if pics.get("has_gravatar"):
+        out.append(f"🖼️ <a href='{pics['gravatar']}'>Gravatar disponible</a>\n")
+
+    # Avisos no fatales
+    for e in data.get("errors", []):
+        out.append(f"<i>⚠️ {e}</i>")
+
+    return "\n".join(out)
+
+
+def format_fb_osint(data: dict) -> str:
+    """Formatea el resultado de modules.fb_osint.fb_lookup()."""
+    out: list[str] = []
+    inp = data.get("input", "?")
+    inp_type = data.get("input_type", "?")
+    out.append(f"📘 <b>Facebook OSINT — {inp}</b>")
+    out.append("━━━━━━━━━━━━━━━━━━━━━━━━")
+    out.append(f"🔍 <i>Tipo de input: {inp_type}</i>")
+    out.append(f"🔐 <i>Sesión: {data.get('session', 'anonymous')}</i>\n")
+
+    if not data.get("found"):
+        for e in data.get("errors", []):
+            out.append(f"⚠️ {e}")
+        if not data.get("errors"):
+            out.append("❌ Cuenta no encontrada o sin datos públicos.")
+        return "\n".join(out)
+
+    rec = data.get("recovery") or {}
+
+    # ── Status básico ────────────────────────────────────────────────────────
+    out.append("✅ <b>Cuenta encontrada</b>")
+    if data.get("display_name"):
+        nm = data["display_name"].replace("<", "&lt;").replace(">", "&gt;")
+        out.append(f"   ▪️ Nombre: <b>{nm}</b>")
+    if data.get("user_id"):
+        out.append(f"   ▪️ FB User ID: <code>{data['user_id']}</code>")
+        out.append(
+            f"   ▪️ Perfil: "
+            f"<a href='https://www.facebook.com/{data['user_id']}'>"
+            f"facebook.com/{data['user_id']}</a>"
+        )
+    out.append("")
+
+    # ── Recovery hints (la joya) ─────────────────────────────────────────────
+    if rec.get("obfuscated_email") or rec.get("obfuscated_phone"):
+        out.append("🎯 <b>Recovery hints</b>")
+        if rec.get("obfuscated_email"):
+            out.append(f"   📧 Email: <code>{rec['obfuscated_email']}</code>")
+        if rec.get("obfuscated_phone"):
+            out.append(f"   📱 Phone: <code>{rec['obfuscated_phone']}</code>")
+        out.append("   <i>(Hints parciales del recovery de Facebook)</i>\n")
+
+    # ── Foto de perfil ───────────────────────────────────────────────────────
+    pic_urls = data.get("profile_pic_urls") or []
+    if data.get("user_id") and pic_urls:
+        out.append("🖼️ <b>Foto de perfil</b>")
+        out.append(f"   ▪️ <a href='{pic_urls[0]}'>HD (large)</a>")
+        if len(pic_urls) > 1:
+            out.append(f"   ▪️ <a href='{pic_urls[1]}'>Normal</a>")
+        out.append("")
+
+    # Errores no fatales
+    for e in data.get("errors", []):
+        if e:
+            out.append(f"<i>⚠️ {e}</i>")
+
+    return "\n".join(out)
