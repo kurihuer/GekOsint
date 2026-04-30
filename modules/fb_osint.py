@@ -121,9 +121,9 @@ async def get_fb_recovery_hints(query: str) -> dict:
     Usa el flujo público de "Forgot password" de FB para obtener hints
     parcialmente ofuscados de email y teléfono asociados a la cuenta.
 
-    Input: username, email, teléfono o user ID.
-    Output: dict con `obfuscated_email`, `obfuscated_phone`,
-    `display_name`, `profile_pic_url` y `user_id`.
+    Usa `m.facebook.com` (versión mobile) en vez de `www.facebook.com`
+    porque desde IPs de cloud (Koyeb/etc) el sitio principal devuelve
+    400/captcha por anti-bot, mientras que el mobile es mucho más laxo.
     """
     out = {
         "found":            False,
@@ -135,43 +135,60 @@ async def get_fb_recovery_hints(query: str) -> dict:
         "error":            None,
     }
 
+    common_headers = {
+        "User-Agent":      UA_MOBILE,
+        "Accept":          "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+    }
+
     try:
         async with httpx.AsyncClient(
-            timeout=15.0, follow_redirects=True
+            timeout=15.0, follow_redirects=True,
+            cookies=_fb_cookies(),  # Inyectar cookies de auth si las hay
         ) as client:
-            # 1) GET inicial al recovery para conseguir cookies/datr
+            # 1) GET inicial al recovery vía m.facebook.com
             r1 = await client.get(
-                "https://www.facebook.com/login/identify/",
+                "https://m.facebook.com/login/identify/",
                 params={"ctx": "recover"},
-                headers={"User-Agent": UA_DESKTOP},
+                headers=common_headers,
             )
             if r1.status_code != 200:
-                out["error"] = f"FB identify inicial → HTTP {r1.status_code}"
+                out["error"] = (
+                    f"FB identify inicial → HTTP {r1.status_code} "
+                    f"(probablemente IP datacenter bloqueada, configurá cookies FB_*)"
+                )
                 return out
 
-            # Extraer fb_dtsg / lsd del HTML (tokens CSRF)
-            lsd_m = re.search(r'name="lsd"\s+value="([^"]+)"', r1.text)
+            # Extraer tokens CSRF del HTML mobile
+            lsd_m     = re.search(r'name="lsd"\s+value="([^"]+)"', r1.text)
             jazoest_m = re.search(r'name="jazoest"\s+value="([^"]+)"', r1.text)
+            fb_dtsg_m = re.search(r'name="fb_dtsg"\s+value="([^"]+)"', r1.text)
 
             data = {"email": query}
             if lsd_m:     data["lsd"]     = lsd_m.group(1)
             if jazoest_m: data["jazoest"] = jazoest_m.group(1)
+            if fb_dtsg_m: data["fb_dtsg"] = fb_dtsg_m.group(1)
 
-            # 2) POST al endpoint de identify
+            # 2) POST al endpoint mobile de identify
             r2 = await client.post(
-                "https://www.facebook.com/login/identify/?ctx=recover",
+                "https://m.facebook.com/login/identify/?ctx=recover",
                 data=data,
                 headers={
-                    "User-Agent":    UA_DESKTOP,
-                    "Content-Type":  "application/x-www-form-urlencoded",
-                    "Origin":        "https://www.facebook.com",
-                    "Referer":       "https://www.facebook.com/login/identify/?ctx=recover",
+                    **common_headers,
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "Origin":       "https://m.facebook.com",
+                    "Referer":      "https://m.facebook.com/login/identify/?ctx=recover",
                 },
             )
 
             if r2.status_code in (401, 429):
                 out["error"] = f"FB rate limit ({r2.status_code})"
                 trigger_fb_pause(f"identify {r2.status_code}")
+                return out
+            if r2.status_code == 400:
+                out["error"] = (
+                    "FB devolvió 400 — anti-bot. Renová cookies FB_C_USER y FB_XS"
+                )
                 return out
 
             html = r2.text or ""
@@ -234,37 +251,58 @@ async def get_fb_recovery_hints(query: str) -> dict:
 async def resolve_fb_user_id(username: str) -> dict:
     """
     Convierte un username público de FB a user ID numérico.
-    Usa el endpoint mobile que devuelve el ID en metadata.
+    Usa `mbasic.facebook.com` que es la versión más simple del sitio
+    (sin JS, sin anti-bot agresivo) — ideal para scrape desde cloud IPs.
+
+    Si mbasic falla, intenta m.facebook.com como fallback.
     """
     out = {"user_id": None, "error": None}
+
+    # Patrones de user_id en HTML de FB
+    patterns = [
+        r'"userID":"(\d{8,17})"',
+        r'"profile_id":(\d{8,17})',
+        r'fb://profile/(\d{8,17})',
+        r'content="fb://profile/(\d{8,17})"',
+        r'entity_id":"(\d{8,17})"',
+        r'profile\.php\?id=(\d{8,17})',
+        r'/photos/(\d{8,17})/',
+    ]
+
+    candidate_urls = [
+        f"https://mbasic.facebook.com/{username}",
+        f"https://m.facebook.com/{username}",
+    ]
+
     try:
         async with httpx.AsyncClient(
-            timeout=15.0, follow_redirects=True
+            timeout=15.0, follow_redirects=True,
+            cookies=_fb_cookies(),
         ) as client:
-            r = await client.get(
-                f"https://www.facebook.com/{username}",
-                headers={"User-Agent": UA_MOBILE},
+            for url in candidate_urls:
+                r = await client.get(
+                    url,
+                    headers={
+                        "User-Agent":      UA_MOBILE,
+                        "Accept":          "text/html,application/xhtml+xml",
+                        "Accept-Language": "en-US,en;q=0.9",
+                    },
+                )
+                if r.status_code != 200:
+                    logger.debug(f"resolve_fb_user_id: {url} → HTTP {r.status_code}")
+                    continue
+
+                html = r.text or ""
+                for pat in patterns:
+                    m = re.search(pat, html)
+                    if m:
+                        out["user_id"] = m.group(1)
+                        return out
+
+            out["error"] = (
+                "User ID no encontrado (perfil privado, no existe, "
+                "o FB nos detectó como bot — renová cookies)"
             )
-            if r.status_code != 200:
-                out["error"] = f"FB perfil → HTTP {r.status_code}"
-                return out
-
-            html = r.text or ""
-            # Patrones donde aparece el numeric ID
-            patterns = [
-                r'"userID":"(\d{8,17})"',
-                r'"profile_id":(\d{8,17})',
-                r'fb://profile/(\d{8,17})',
-                r'content="fb://profile/(\d{8,17})"',
-                r'entity_id":"(\d{8,17})"',
-            ]
-            for pat in patterns:
-                m = re.search(pat, html)
-                if m:
-                    out["user_id"] = m.group(1)
-                    return out
-
-            out["error"] = "User ID no encontrado en HTML"
     except Exception as e:
         out["error"] = f"{type(e).__name__}: {e}"
         logger.warning(f"resolve_fb_user_id({username}): {e}")

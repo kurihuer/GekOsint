@@ -349,84 +349,110 @@ async def get_google_profile_authenticated(email: str) -> dict:
         out["error"] = "no auth"
         return out
 
+    # API keys probadas por GHunt en distintas versiones — las roto en orden
+    # porque Google deprecá keys con cierta frecuencia.
+    api_keys = [
+        "AIzaSyDX5UKqKtOkkDigbmRW2rvi1a64jmAuOnE",
+        "AIzaSyDfP15ec40vAQ7Pgsz4rsXyVdL4LRfgUjk",
+        "AIzaSyCwUYd1AIXXBY8XRYSDx1XrRObmcqNrVDw",
+    ]
+
+    # Endpoint correcto: `:lookup` (gRPC→REST), no `/lookup`
+    endpoint = "https://people-pa.clients6.google.com/v2/people:lookup"
+
+    body = {
+        "id":              email,
+        "type":            "EMAIL",
+        "matchType":       "EXACT",
+        "extensionSet": {
+            "extensionNames": [
+                "HANGOUTS_ADDITIONAL_DATA", "DYNAMITE_ADDITIONAL_DATA",
+                "GPLUS_ADDITIONAL_DATA",
+            ]
+        },
+        "requestMask": {
+            "includeField": {
+                "paths": [
+                    "person.metadata.best_display_name",
+                    "person.name", "person.photo", "person.cover_photo",
+                    "person.email", "person.metadata", "person.organization",
+                    "person.location",
+                ]
+            },
+            "includeContainer": ["PROFILE", "DOMAIN_PROFILE"],
+        },
+        "coreIdParams": {"useRealtimeNotificationExpandedAcls": True},
+    }
+
     try:
         async with httpx.AsyncClient(timeout=20.0) as client:
-            # Endpoint People API "lookup" usado por GHunt
-            r = await client.post(
-                "https://people-pa.clients6.google.com/v2/people/lookup",
-                params={
-                    "key":            "AIzaSyCwUYd1AIXXBY8XRYSDx1XrRObmcqNrVDw",
-                    "alt":            "json",
-                },
-                json={
-                    "id":           [email],
-                    "type":         ["EMAIL"],
-                    "matchType":    "LENIENT",
-                    "requestMask": {
-                        "includeField": {
-                            "paths": [
-                                "person.metadata", "person.name",
-                                "person.photo",    "person.emailAddress",
-                                "person.coverPhoto",
-                            ]
-                        }
+            for key in api_keys:
+                r = await client.post(
+                    endpoint,
+                    params={"key": key, "alt": "json"},
+                    json=body,
+                    headers={
+                        "User-Agent":      UA,
+                        "Origin":          "https://contacts.google.com",
+                        "Referer":         "https://contacts.google.com/",
+                        "Authorization":   _sapisidhash("https://contacts.google.com"),
+                        "X-Goog-AuthUser": "0",
+                        "Content-Type":    "application/json+protobuf",
                     },
-                    "extensionSet": {
-                        "extensionNames": ["DYNAMITE_ADDITIONAL_DATA"]
-                    },
-                    "coreIdParams": {"useRealtimeNotificationExpandedAcls": True},
-                },
-                headers={
-                    "User-Agent":    UA,
-                    "Origin":        "https://contacts.google.com",
-                    "Referer":       "https://contacts.google.com/",
-                    "Authorization": _sapisidhash("https://contacts.google.com"),
-                    "X-Goog-AuthUser": "0",
-                },
-                cookies=_google_cookies(),
-            )
+                    cookies=_google_cookies(),
+                )
 
-            if r.status_code in (401, 403, 429):
-                out["error"] = f"Google {r.status_code} (cookies expiradas?)"
-                if r.status_code in (401, 429):
-                    trigger_gmail_pause(f"people-api {r.status_code}")
+                if r.status_code in (401, 403, 429):
+                    out["error"] = f"Google {r.status_code} (cookies expiradas?)"
+                    if r.status_code in (401, 429):
+                        trigger_gmail_pause(f"people-api {r.status_code}")
+                    return out
+
+                # 404 con esta key → probar la siguiente
+                if r.status_code == 404:
+                    logger.debug(f"People API key {key[:12]}... → 404, probando siguiente")
+                    continue
+
+                if r.status_code != 200:
+                    out["error"] = f"People API → HTTP {r.status_code}"
+                    return out
+
+                # 200 con datos
+                try:
+                    data = r.json()
+                except Exception:
+                    out["error"] = "People API respondió no-JSON"
+                    return out
+
+                matches = data.get("matches") or []
+                if not matches:
+                    out["error"] = "Email no resuelve a una cuenta Google pública"
+                    return out
+
+                person_id_list = matches[0].get("personId", [])
+                person_id = person_id_list[0] if person_id_list else None
+
+                people = data.get("people") or {}
+                person = people.get(person_id) or {}
+
+                out["gaia_id"] = person_id
+
+                for n in (person.get("name") or []):
+                    full = n.get("displayName") or n.get("displayNameLastFirst")
+                    if full and full not in out["names"]:
+                        out["names"].append(full)
+
+                for ph in (person.get("photo") or []):
+                    url = ph.get("url")
+                    if url:
+                        out["photo_url"] = re.sub(r"=s\d+", "=s400", url)
+                        break
+
+                out["found"] = True
                 return out
 
-            if r.status_code != 200:
-                out["error"] = f"People API → HTTP {r.status_code}"
-                return out
-
-            data = r.json()
-            matches = data.get("matches") or []
-            if not matches:
-                out["error"] = "Email no resuelve a una cuenta Google pública"
-                return out
-
-            # Tomar el primer match
-            person_id = matches[0].get("personId", [None])[0]
-            people = data.get("people") or {}
-            person = people.get(person_id) or {}
-            metadata = person.get("metadata") or {}
-
-            out["gaia_id"] = (
-                metadata.get("ownerUserType")  # raro
-                or person_id
-                or None
-            )
-
-            for n in (person.get("name") or []):
-                full = n.get("displayName")
-                if full and full not in out["names"]:
-                    out["names"].append(full)
-
-            for ph in (person.get("photo") or []):
-                url = ph.get("url")
-                if url:
-                    # Subir resolución (Google permite ?sz=400)
-                    out["photo_url"] = re.sub(r"=s\d+", "=s400", url)
-                    break
-
-            out["found"] = True
+            # Si todas las keys dieron 404
+            out["error"] = "People API: 404 con todas las keys (email no público o keys deprecadas)"
 
     except Exception as e:
         out["error"] = f"{type(e).__name__}: {e}"
