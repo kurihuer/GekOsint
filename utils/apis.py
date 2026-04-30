@@ -196,9 +196,10 @@ async def _deploy_gist(html_content, filename):
             gist_id = gist.get("id", "")
             owner = gist.get("owner", {}).get("login", "")
             if owner and gist_id:
-                # gistcdn.githack.com → CDN de producción, SIN página intermedia
-                # "One more step" (a diferencia de gist.githack.com que sí la tiene)
-                return f"https://gistcdn.githack.com/{owner}/{gist_id}/raw/{filename}"
+                # cdn.statically.io → CDN serio que sirve gists con
+                # Content-Type: text/html y SIN página intermedia tipo
+                # "One more step" (problema crónico de gist.githack.com).
+                return f"https://cdn.statically.io/gist/{owner}/{gist_id}/raw/{filename}"
             logger.warning(f"_deploy_gist: respuesta 201 sin owner/id ({gist!r})")
             return None
         # Diagnóstico: por qué falló
