@@ -135,63 +135,93 @@ async def get_fb_recovery_hints(query: str) -> dict:
         "error":            None,
     }
 
-    common_headers = {
-        "User-Agent":      UA_MOBILE,
+    # Headers ultra-minimalistas — cuanto más simulamos un Nokia viejo
+    # accediendo a mbasic, menos anti-bot triggea Meta.
+    minimal_headers = {
+        "User-Agent":      "Mozilla/5.0 (Linux; U; Android 9; en-US) AppleWebKit/534.30 (KHTML, like Gecko) Version/4.0 Mobile Safari/534.30",
         "Accept":          "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.9",
     }
 
+    # Probar mbasic primero (el más laxo), después m.facebook.com como fallback
+    base_urls = [
+        "https://mbasic.facebook.com/login/identify/",
+        "https://m.facebook.com/login/identify/",
+    ]
+
     try:
         async with httpx.AsyncClient(
-            timeout=15.0, follow_redirects=True,
-            cookies=_fb_cookies(),  # Inyectar cookies de auth si las hay
+            timeout=20.0, follow_redirects=True,
+            cookies=_fb_cookies(),
         ) as client:
-            # 1) GET inicial al recovery vía m.facebook.com
-            r1 = await client.get(
-                "https://m.facebook.com/login/identify/",
-                params={"ctx": "recover"},
-                headers=common_headers,
-            )
-            if r1.status_code != 200:
+            html = None
+            base_url = None
+
+            for url in base_urls:
+                # 1) GET inicial
+                try:
+                    r1 = await client.get(
+                        url,
+                        params={"ctx": "recover"},
+                        headers=minimal_headers,
+                    )
+                except Exception as e:
+                    logger.debug(f"FB GET {url} excepción: {e}")
+                    continue
+
+                if r1.status_code != 200:
+                    logger.debug(f"FB GET {url} → HTTP {r1.status_code}")
+                    continue
+
+                # Pausa "humana" entre el GET y el POST
+                await asyncio.sleep(1.5)
+
+                # Extraer tokens CSRF
+                lsd_m     = re.search(r'name="lsd"\s+value="([^"]+)"',     r1.text)
+                jazoest_m = re.search(r'name="jazoest"\s+value="([^"]+)"', r1.text)
+                fb_dtsg_m = re.search(r'name="fb_dtsg"\s+value="([^"]+)"', r1.text)
+
+                data = {"email": query}
+                if lsd_m:     data["lsd"]     = lsd_m.group(1)
+                if jazoest_m: data["jazoest"] = jazoest_m.group(1)
+                if fb_dtsg_m: data["fb_dtsg"] = fb_dtsg_m.group(1)
+
+                # 2) POST al mismo dominio
+                origin = "https://" + url.split("/")[2]
+                r2 = await client.post(
+                    url + "?ctx=recover",
+                    data=data,
+                    headers={
+                        **minimal_headers,
+                        "Content-Type": "application/x-www-form-urlencoded",
+                        "Origin":       origin,
+                        "Referer":      url + "?ctx=recover",
+                    },
+                )
+
+                if r2.status_code in (401, 429):
+                    out["error"] = f"FB rate limit ({r2.status_code})"
+                    trigger_fb_pause(f"identify {r2.status_code}")
+                    return out
+
+                if r2.status_code == 400:
+                    logger.debug(f"FB POST {url} → 400 (anti-bot agresivo aquí)")
+                    continue
+
+                if r2.status_code == 200:
+                    html = r2.text or ""
+                    base_url = url
+                    break
+
+                logger.debug(f"FB POST {url} → HTTP {r2.status_code}")
+
+            if not html:
                 out["error"] = (
-                    f"FB identify inicial → HTTP {r1.status_code} "
-                    f"(probablemente IP datacenter bloqueada, configurá cookies FB_*)"
+                    "FB recovery bloqueado desde IP de cloud. "
+                    "Las cookies funcionan pero el endpoint de recovery está "
+                    "más restringido. Probá desde una IP residencial o proxy."
                 )
                 return out
-
-            # Extraer tokens CSRF del HTML mobile
-            lsd_m     = re.search(r'name="lsd"\s+value="([^"]+)"', r1.text)
-            jazoest_m = re.search(r'name="jazoest"\s+value="([^"]+)"', r1.text)
-            fb_dtsg_m = re.search(r'name="fb_dtsg"\s+value="([^"]+)"', r1.text)
-
-            data = {"email": query}
-            if lsd_m:     data["lsd"]     = lsd_m.group(1)
-            if jazoest_m: data["jazoest"] = jazoest_m.group(1)
-            if fb_dtsg_m: data["fb_dtsg"] = fb_dtsg_m.group(1)
-
-            # 2) POST al endpoint mobile de identify
-            r2 = await client.post(
-                "https://m.facebook.com/login/identify/?ctx=recover",
-                data=data,
-                headers={
-                    **common_headers,
-                    "Content-Type": "application/x-www-form-urlencoded",
-                    "Origin":       "https://m.facebook.com",
-                    "Referer":      "https://m.facebook.com/login/identify/?ctx=recover",
-                },
-            )
-
-            if r2.status_code in (401, 429):
-                out["error"] = f"FB rate limit ({r2.status_code})"
-                trigger_fb_pause(f"identify {r2.status_code}")
-                return out
-            if r2.status_code == 400:
-                out["error"] = (
-                    "FB devolvió 400 — anti-bot. Renová cookies FB_C_USER y FB_XS"
-                )
-                return out
-
-            html = r2.text or ""
 
             # Si la página redirigió al paso "How do you want to login?",
             # significa que la cuenta existe → extraer datos

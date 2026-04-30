@@ -1029,6 +1029,27 @@ def format_gmail_osint(data: dict) -> str:
     if pics.get("has_gravatar"):
         out.append(f"🖼️ <a href='{pics['gravatar']}'>Gravatar disponible</a>\n")
 
+    # ── Análisis del dominio (útil para Workspace) ───────────────────────────
+    dom = data.get("domain") or {}
+    if dom.get("mail_provider"):
+        out.append("🌐 <b>Dominio del email</b>")
+        out.append(f"   ▪️ Dominio: <code>{dom.get('domain', '?')}</code>")
+        out.append(f"   ▪️ Proveedor: <b>{dom['mail_provider']}</b>")
+        if dom.get("is_workspace"):
+            out.append("   ▪️ ✅ <i>Google Workspace confirmado</i>")
+        if dom.get("mx_records"):
+            out.append(f"   ▪️ MX: <code>{', '.join(dom['mx_records'][:2])}</code>")
+        spf = dom.get("has_spf")
+        dmarc = dom.get("has_dmarc")
+        sec = []
+        if spf:   sec.append("✅ SPF")
+        elif spf is False: sec.append("❌ sin SPF")
+        if dmarc: sec.append("✅ DMARC")
+        elif dmarc is False: sec.append("❌ sin DMARC")
+        if sec:
+            out.append(f"   ▪️ Seguridad: {' · '.join(sec)}")
+        out.append("")
+
     # Avisos no fatales
     for e in data.get("errors", []):
         out.append(f"<i>⚠️ {e}</i>")

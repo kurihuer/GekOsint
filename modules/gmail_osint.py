@@ -463,6 +463,78 @@ async def get_google_profile_authenticated(email: str) -> dict:
 
 # ── API pública del módulo ────────────────────────────────────────────────────
 
+async def get_domain_intel(domain: str) -> dict:
+    """
+    Análisis del dominio del email (útil para Workspace).
+    Detecta si el dominio usa Google Workspace, Microsoft 365, Zoho, etc.
+    """
+    out = {
+        "domain":            domain,
+        "is_workspace":      False,
+        "mail_provider":     None,
+        "mx_records":        [],
+        "has_spf":           None,
+        "has_dmarc":         None,
+        "error":             None,
+    }
+    try:
+        import dns.resolver
+        resolver = dns.resolver.Resolver()
+        resolver.timeout = 4.0
+        resolver.lifetime = 6.0
+
+        # MX records → quién maneja el correo
+        try:
+            answers = resolver.resolve(domain, "MX")
+            mxs = []
+            for rdata in answers:
+                mxs.append(str(rdata.exchange).lower().rstrip("."))
+            out["mx_records"] = mxs
+
+            mx_str = " ".join(mxs).lower()
+            if "google" in mx_str or "googlemail" in mx_str:
+                out["is_workspace"] = True
+                out["mail_provider"] = "Google Workspace"
+            elif "outlook" in mx_str or "microsoft" in mx_str:
+                out["mail_provider"] = "Microsoft 365"
+            elif "zoho" in mx_str:
+                out["mail_provider"] = "Zoho Mail"
+            elif "protonmail" in mx_str or "proton" in mx_str:
+                out["mail_provider"] = "Proton Mail"
+            else:
+                out["mail_provider"] = mxs[0] if mxs else "desconocido"
+        except Exception:
+            pass
+
+        # SPF
+        try:
+            answers = resolver.resolve(domain, "TXT")
+            for rdata in answers:
+                txt = "".join([s.decode() if isinstance(s, bytes) else s
+                               for s in rdata.strings])
+                if txt.startswith("v=spf1"):
+                    out["has_spf"] = True
+                    break
+            if out["has_spf"] is None:
+                out["has_spf"] = False
+        except Exception:
+            pass
+
+        # DMARC
+        try:
+            answers = resolver.resolve(f"_dmarc.{domain}", "TXT")
+            out["has_dmarc"] = bool(list(answers))
+        except Exception:
+            out["has_dmarc"] = False
+
+    except ImportError:
+        out["error"] = "dnspython no instalado"
+    except Exception as e:
+        out["error"] = f"{type(e).__name__}: {e}"
+
+    return out
+
+
 async def gmail_lookup(email: str) -> dict:
     """
     Lookup completo de un email Gmail / Google.
@@ -478,6 +550,7 @@ async def gmail_lookup(email: str) -> dict:
         "profile":   None,
         "youtube":   None,
         "pictures":  None,
+        "domain":    None,
         "session":   "anonymous",
         "errors":    [],
     }
@@ -492,17 +565,18 @@ async def gmail_lookup(email: str) -> dict:
 
     domain = email.split("@", 1)[-1]
     out["is_gmail"]  = domain in GMAIL_DOMAINS
-    out["is_google"] = out["is_gmail"]  # Workspace tmb se valida via recovery
+    out["is_google"] = out["is_gmail"]
 
     if _has_google_cookies():
         out["session"] = "authenticated (cookies)"
 
-    # Las llamadas que NO comparten dependencias corren en paralelo
-    pictures, youtube, recovery, profile = await asyncio.gather(
+    # 5 llamadas en paralelo
+    pictures, youtube, recovery, profile, domain_intel = await asyncio.gather(
         get_profile_picture_urls(email),
         get_youtube_channel(email),
         get_google_recovery_hints(email),
         get_google_profile_authenticated(email),
+        get_domain_intel(domain),
         return_exceptions=False,
     )
 
@@ -510,16 +584,30 @@ async def gmail_lookup(email: str) -> dict:
     out["youtube"]  = youtube
     out["recovery"] = recovery
     out["profile"]  = profile
+    out["domain"]   = domain_intel
 
     if recovery.get("exists"):
         out["found"] = True
         out["is_google"] = True
     if profile.get("found"):
         out["found"] = True
+    # Si el dominio es Workspace, también es cuenta Google
+    if domain_intel.get("is_workspace"):
+        out["is_google"] = True
 
+    # Errores: solo agregar el de profile si NO obtuvimos datos por otra vía.
+    # El People API rompe seguido y no vale la pena alarmar al usuario si
+    # ya tenemos recovery hints + Gravatar + YouTube + dominio.
     if recovery.get("error"):
         out["errors"].append(f"Recovery: {recovery['error']}")
-    if profile.get("error") and profile["error"] != "no auth":
+
+    has_useful_data = (
+        recovery.get("exists") or
+        (pictures and pictures.get("has_gravatar")) or
+        (youtube and youtube.get("found")) or
+        (domain_intel and domain_intel.get("mail_provider"))
+    )
+    if profile.get("error") and profile["error"] != "no auth" and not has_useful_data:
         out["errors"].append(f"Profile: {profile['error']}")
 
     return out
