@@ -22,6 +22,7 @@ Anti-ban: rate limiter dedicado, separado del global del bot.
 import asyncio
 import base64
 import hashlib
+import json
 import logging
 import os
 import re
@@ -38,6 +39,7 @@ try:
     from config import (
         GOOGLE_SAPISID, GOOGLE_HSID, GOOGLE_SSID, GOOGLE_APISID,
         GOOGLE_SECURE_1PSID, GOOGLE_SECURE_3PSID, GOOGLE_NID,
+        PROXY_URL,
     )
 except ImportError:
     GOOGLE_SAPISID       = os.getenv("GOOGLE_SAPISID", "")
@@ -47,6 +49,7 @@ except ImportError:
     GOOGLE_SECURE_1PSID  = os.getenv("GOOGLE_SECURE_1PSID", "")
     GOOGLE_SECURE_3PSID  = os.getenv("GOOGLE_SECURE_3PSID", "")
     GOOGLE_NID           = os.getenv("GOOGLE_NID", "")
+    PROXY_URL            = os.getenv("PROXY_URL", "")
 
 # ── Rate limiter dedicado a Google ────────────────────────────────────────────
 PER_USER_COOLDOWN     = 60       # 1 lookup cada 60s por usuario
@@ -166,9 +169,10 @@ async def get_google_recovery_hints(email: str) -> dict:
         "error":             None,
     }
 
+    _proxy = {"proxy": PROXY_URL} if PROXY_URL else {}
     try:
         async with httpx.AsyncClient(
-            timeout=15.0, follow_redirects=True
+            timeout=15.0, follow_redirects=True, **_proxy
         ) as client:
             # 1) GET inicial para conseguir cookies + token
             r1 = await client.get(
@@ -210,51 +214,67 @@ async def get_google_recovery_hints(email: str) -> dict:
                 out["exists"] = False
                 return out
 
-            # Si pasamos el lookup, intentar el flow de recovery
-            r3 = await client.get(
-                "https://accounts.google.com/signin/v2/usernamerecovery",
-                params={"hl": "en"},
-                headers={"User-Agent": UA},
-            )
-
-            # Recovery hints — endpoint legacy que aún devuelve datos
-            r4 = await client.post(
-                "https://accounts.google.com/_/signin/usernamerecovery",
+            # Intentar obtener hints vía el flujo moderno de forgot-password
+            r3 = await client.post(
+                "https://accounts.google.com/_/signin/sl/lookup",
                 data={
-                    "Email":        email,
-                    "service":      "mail",
-                    "continue":     "https://mail.google.com/mail/",
-                    "GALX":         r3.cookies.get("GALX", ""),
+                    "f.req": f'[["{email}",null,1]]',
+                    "hl":    "en",
                 },
                 headers={
                     "User-Agent":   UA,
-                    "Content-Type": "application/x-www-form-urlencoded",
-                    "Referer":      "https://accounts.google.com/signin/v2/usernamerecovery",
+                    "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+                    "Origin":       "https://accounts.google.com",
+                    "Referer":      "https://accounts.google.com/v3/signin/identifier",
                 },
             )
 
-            if r4.status_code in (401, 429):
-                out["error"] = f"Google rate limit ({r4.status_code})"
-                trigger_gmail_pause(f"recovery {r4.status_code}")
+            if r3.status_code in (401, 429):
+                out["error"] = f"Google rate limit ({r3.status_code})"
+                trigger_gmail_pause(f"recovery {r3.status_code}")
                 return out
 
-            body = r4.text or ""
-            # Buscar patrones típicos en el HTML/JSON de respuesta
-            phone_m = re.search(r"(\+?[0-9\*•·\s\-]{6,}\d{2})", body)
-            email_m = re.search(
-                r"([a-zA-Z][\w*•]*@[\w*•]+\.[a-z]{2,})", body
-            )
+            # Parsear respuesta — Google devuelve arrays protobuf/JSON
+            body = r3.text or ""
+            try:
+                clean = body.lstrip(")]}'\n ")
+                flat = str(json.loads(clean)) if clean.startswith("[") else body
+            except Exception:
+                flat = body
+
+            # Buscar patrones ofuscados (sólo aceptar si contienen • o *)
+            phone_m = re.search(r"'(\+?[\d•·\*\s\-]{5,}\d{2})'", flat)
+            email_m = re.search(r"'([a-zA-Z][^'@]{0,20}@[^']{1,30})'", flat)
 
             if phone_m:
-                out["obfuscated_phone"] = phone_m.group(1).strip()
-                out["exists"] = True
+                cand = phone_m.group(1).strip()
+                if any(c in cand for c in ("•", "*", "·")):
+                    out["obfuscated_phone"] = cand
+                    out["exists"] = True
             if email_m:
-                out["obfuscated_email"] = email_m.group(1).strip()
-                out["exists"] = True
+                cand = email_m.group(1)
+                if any(c in cand for c in ("*", "•")) and "@" in cand:
+                    out["obfuscated_email"] = cand
+                    out["exists"] = True
 
-            # Si no hubo hints pero la cuenta tampoco se descartó, asumimos existe
+            # Fallback: buscar también en la respuesta del accountlookup (r2)
+            if not out["obfuscated_phone"] or not out["obfuscated_email"]:
+                body2 = r2.text or ""
+                pm = re.search(r"(\+?[\d•·\*\s\-]{5,}\d{2})", body2)
+                em = re.search(r"([a-zA-Z*•][^\s\"<>]{0,20}@[\w.*•]{2,}\.[a-z]{2,})", body2)
+                if pm and not out["obfuscated_phone"]:
+                    cand = pm.group(1).strip()
+                    if any(c in cand for c in ("•", "*", "·")):
+                        out["obfuscated_phone"] = cand
+                        out["exists"] = True
+                if em and not out["obfuscated_email"]:
+                    cand = em.group(1)
+                    if any(c in cand for c in ("*", "•")) and "@" in cand:
+                        out["obfuscated_email"] = cand
+                        out["exists"] = True
+
+            # Heurística final: si el lookup no devolvió "no encontrado", existe
             if not out["exists"] and "couldn't" not in text_lower:
-                # Heurística: si el primer lookup pasó sin error, probablemente existe
                 out["exists"] = True
 
     except Exception as e:
@@ -278,8 +298,9 @@ async def get_profile_picture_urls(email: str) -> dict:
     grav = f"https://www.gravatar.com/avatar/{md5}?s=400&d=404"
     out["gravatar"] = grav
 
+    _proxy = {"proxy": PROXY_URL} if PROXY_URL else {}
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=10.0, **_proxy) as client:
             r = await client.head(grav)
             out["has_gravatar"] = (r.status_code == 200)
     except Exception:
@@ -297,9 +318,10 @@ async def get_youtube_channel(email: str) -> dict:
     """
     out = {"found": False, "channels": []}
     handle = email.split("@")[0]
+    _proxy = {"proxy": PROXY_URL} if PROXY_URL else {}
     try:
         async with httpx.AsyncClient(
-            timeout=15.0, follow_redirects=True
+            timeout=15.0, follow_redirects=True, **_proxy
         ) as client:
             r = await client.get(
                 "https://www.youtube.com/results",
@@ -384,8 +406,9 @@ async def get_google_profile_authenticated(email: str) -> dict:
         "coreIdParams": {"useRealtimeNotificationExpandedAcls": True},
     }
 
+    _proxy = {"proxy": PROXY_URL} if PROXY_URL else {}
     try:
-        async with httpx.AsyncClient(timeout=20.0) as client:
+        async with httpx.AsyncClient(timeout=20.0, **_proxy) as client:
             for key in api_keys:
                 r = await client.post(
                     endpoint,

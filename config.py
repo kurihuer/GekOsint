@@ -59,6 +59,12 @@ FB_XS     = os.getenv("FB_XS", "")
 FB_DATR   = os.getenv("FB_DATR", "")
 FB_FR     = os.getenv("FB_FR", "")
 
+# ── Proxy residencial (opcional, para FB y Gmail OSINT) ──────────────────────
+# Desde IPs de cloud (Koyeb/Railway) Meta y Google bloquean los endpoints
+# de recovery hints. Un proxy residencial evita el bloqueo.
+# Formato Webshare: http://usuario:password@proxy.webshare.io:80
+PROXY_URL = os.getenv("PROXY_URL", "")
+
 # ============================================
 # CONTROL DE ACCESO
 # Todos los IDs se gestionan via ADMIN_ID / GEKOSINT_ALLOWED

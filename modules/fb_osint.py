@@ -30,12 +30,13 @@ logger = logging.getLogger("GekOsint.FBOsint")
 
 # ── Configuración (env vars) ──────────────────────────────────────────────────
 try:
-    from config import FB_C_USER, FB_XS, FB_DATR, FB_FR
+    from config import FB_C_USER, FB_XS, FB_DATR, FB_FR, PROXY_URL
 except ImportError:
     FB_C_USER = os.getenv("FB_C_USER", "")
     FB_XS     = os.getenv("FB_XS", "")
     FB_DATR   = os.getenv("FB_DATR", "")
     FB_FR     = os.getenv("FB_FR", "")
+    PROXY_URL = os.getenv("PROXY_URL", "")
 
 # ── Rate limiter dedicado ────────────────────────────────────────────────────
 PER_USER_COOLDOWN     = 90        # FB es más estricto que IG → 90s
@@ -149,10 +150,12 @@ async def get_fb_recovery_hints(query: str) -> dict:
         "https://m.facebook.com/login/identify/",
     ]
 
+    _proxy = {"proxy": PROXY_URL} if PROXY_URL else {}
     try:
         async with httpx.AsyncClient(
             timeout=20.0, follow_redirects=True,
             cookies=_fb_cookies(),
+            **_proxy,
         ) as client:
             html = None
             base_url = None
@@ -225,15 +228,42 @@ async def get_fb_recovery_hints(query: str) -> dict:
 
             # Si la página redirigió al paso "How do you want to login?",
             # significa que la cuenta existe → extraer datos
-            if (
-                "Recover your account" in html
-                or "How do you want to login" in html
-                or "send_code" in html
+            html_lower = html.lower()
+
+            # Keywords en varios idiomas que indican que cargó la recovery page
+            found_indicators = [
+                # Inglés
+                "recover your account", "how do you want to login",
+                "send_code", "find your account", "identify your account",
+                "confirm your identity", "confirmation code",
+                "we found your account", "reset your password",
+                # Español
+                "recuperar tu cuenta", "recuperar cuenta",
+                "encontramos tu cuenta", "identificar tu cuenta",
+                "código de confirmación", "cómo quieres",
+                "restablecer tu contraseña",
+                # Portugués
+                "recuperar sua conta", "encontramos sua conta",
+                # Indicadores estructurales (HTML)
+                "checkpoint", '"recovery"', "send_to",
+                "recover_account", "confirmation_code",
+            ]
+
+            # Extraer patrones directamente del HTML (independiente de keywords)
+            em_m = re.search(r'>([a-zA-Z0-9][\w.*•]*@[\w.*•]+\.[a-z]{2,})<', html)
+            ph_m = re.search(r'>(\+?[0-9\s•·\*]{4,}\d{2})<', html)
+
+            page_found = (
+                any(kw in html_lower for kw in found_indicators)
                 or "recover_account" in r2.url.path
-            ):
+                or em_m is not None
+                or ph_m is not None
+            )
+
+            if page_found:
                 out["found"] = True
 
-                # Display name (nombre completo en el header)
+                # Display name
                 name_m = re.search(
                     r'<div[^>]+class="[^"]*name[^"]*"[^>]*>([^<]{2,80})</div>',
                     html
@@ -246,27 +276,17 @@ async def get_fb_recovery_hints(query: str) -> dict:
                 if pic_m:
                     out["profile_pic_url"] = pic_m.group(1).replace("&amp;", "&")
 
-                # User ID — aparece en URLs de form
+                # User ID
                 uid_m = re.search(r'(?:c\[0\]|"u":")(\d{8,17})', html)
                 if uid_m:
                     out["user_id"] = uid_m.group(1)
 
-                # Email parcial: patrones tipo "j****@gmail.com"
-                em_m = re.search(
-                    r'>([a-zA-Z0-9][\w.*•]*@[\w.*•]+\.[a-z]{2,})<',
-                    html
-                )
                 if em_m:
                     out["obfuscated_email"] = em_m.group(1).strip()
-
-                # Phone parcial: tipo "+•• ••• ••45" o "+57 ••• ••45"
-                ph_m = re.search(
-                    r'>(\+?[0-9\s•·\*]{4,}\d{2})<',
-                    html
-                )
                 if ph_m:
                     out["obfuscated_phone"] = ph_m.group(1).strip()
             else:
+                logger.debug(f"FB recovery HTML snippet: {html[:500]}")
                 out["error"] = "FB no encontró cuenta o respuesta no parseable"
 
     except Exception as e:
@@ -304,10 +324,12 @@ async def resolve_fb_user_id(username: str) -> dict:
         f"https://m.facebook.com/{username}",
     ]
 
+    _proxy = {"proxy": PROXY_URL} if PROXY_URL else {}
     try:
         async with httpx.AsyncClient(
             timeout=15.0, follow_redirects=True,
             cookies=_fb_cookies(),
+            **_proxy,
         ) as client:
             for url in candidate_urls:
                 r = await client.get(
