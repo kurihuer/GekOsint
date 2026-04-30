@@ -25,7 +25,7 @@ def main_menu():
         ],
         [
             InlineKeyboardButton("🛰️ Geo Localización", callback_data='menu_geoloc'),
-            InlineKeyboardButton("📶 WiFi Scanner", callback_data='menu_wifi')
+            InlineKeyboardButton("💻 GitHub Recon", callback_data='menu_github')
         ],
         [
             InlineKeyboardButton("ℹ️ Acerca de", callback_data='menu_about')

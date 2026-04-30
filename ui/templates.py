@@ -712,3 +712,145 @@ def format_wifi_scan(data: dict) -> str:
         txt += f"\n   📶 Señal: {signal}  |  MAC: <code>{bssid}</code>\n"
     txt += f"\n<i>Fuente: {data.get('source', 'desconocida')}</i>"
     return txt
+
+
+def format_github_recon(data: dict) -> str:
+    """Formatea el resultado de modules.github_recon.github_recon()."""
+    if not data.get("found"):
+        errs = "\n".join(f"❌ {e}" for e in data.get("errors", []))
+        return (
+            "💻 <b>GitHub Recon</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"{errs or '❌ No se encontró información.'}"
+        )
+
+    p = data["profile"]
+    s = data["stats"]
+    out: list[str] = []
+
+    # ── Header ───────────────────────────────────────────────────────────────
+    out.append(f"💻 <b>GitHub Recon — @{p.get('login', '?')}</b>")
+    out.append("━━━━━━━━━━━━━━━━━━━━━━━━")
+    if data.get("input_type") == "email":
+        out.append(
+            f"📧 <i>Email investigado:</i> <code>{data['input']}</code> "
+            f"→ resuelto a <b>@{data.get('resolved_username')}</b>"
+        )
+    out.append("")
+
+    # ── Perfil ───────────────────────────────────────────────────────────────
+    out.append("👤 <b>Perfil</b>")
+    if p.get("name"):
+        out.append(f"   ▪️ Nombre: <b>{p['name']}</b>")
+    if p.get("bio"):
+        bio = p["bio"][:200].replace("<", "&lt;").replace(">", "&gt;")
+        out.append(f"   ▪️ Bio: <i>{bio}</i>")
+    if p.get("company"):
+        out.append(f"   ▪️ Empresa: {p['company']}")
+    if p.get("location"):
+        out.append(f"   ▪️ Ubicación: 📍 {p['location']}")
+    if p.get("email"):
+        out.append(f"   ▪️ Email público: <code>{p['email']}</code>")
+    if p.get("blog"):
+        blog = p["blog"]
+        if not blog.startswith("http"):
+            blog = "https://" + blog
+        out.append(f"   ▪️ Blog: {blog}")
+    if p.get("twitter_username"):
+        out.append(f"   ▪️ Twitter: @{p['twitter_username']}")
+    if p.get("hireable"):
+        out.append("   ▪️ ✅ Disponible para contratación")
+    if p.get("created_at"):
+        out.append(f"   ▪️ Cuenta creada: {p['created_at'][:10]}")
+    if p.get("updated_at"):
+        out.append(f"   ▪️ Última actividad: {p['updated_at'][:10]}")
+    out.append("")
+
+    # ── Estadísticas ─────────────────────────────────────────────────────────
+    out.append("📊 <b>Estadísticas</b>")
+    out.append(f"   ⭐ {s['total_stars']} stars · 🍴 {s['total_forks']} forks")
+    out.append(f"   📦 {s['total_repos']} repos · 📝 {s['total_gists']} gists")
+    out.append(f"   👥 {s['followers']} seguidores · sigue a {s['following']}")
+    out.append("")
+
+    # ── Emails leakeados (la joya) ───────────────────────────────────────────
+    if data["leaked_emails"]:
+        out.append(
+            f"📨 <b>Emails leakeados en commits</b> "
+            f"({s['unique_leaked_emails']} únicos)"
+        )
+        for email, info in list(data["leaked_emails"].items())[:8]:
+            names = ", ".join(info["names"][:3])
+            out.append(f"   ▪️ <code>{email}</code> ({info['count']}x)")
+            if names:
+                out.append(f"     └ Como: <i>{names}</i>")
+        out.append(
+            f"   <i>(De {s['events_analyzed']} eventos públicos analizados)</i>"
+        )
+        out.append("")
+    else:
+        out.append(
+            "📨 <b>Emails en commits:</b> ninguno detectado "
+            "(solo noreply o sin push events recientes)\n"
+        )
+
+    # ── Organizaciones ───────────────────────────────────────────────────────
+    if data["orgs"]:
+        out.append(f"🏢 <b>Organizaciones</b> ({len(data['orgs'])})")
+        for o in data["orgs"][:8]:
+            login = o.get("login", "?")
+            out.append(f"   ▪️ <a href='https://github.com/{login}'>{login}</a>")
+        out.append("")
+
+    # ── Top repos ────────────────────────────────────────────────────────────
+    if data["repos"]:
+        out.append("🔥 <b>Top repos por stars</b>")
+        for r in data["repos"][:5]:
+            stars = r.get("stargazers_count", 0)
+            forks = r.get("forks_count", 0)
+            lang = r.get("language") or "—"
+            name = r.get("name", "?")
+            url = r.get("html_url", "")
+            desc = (r.get("description") or "").strip()
+            desc = desc.replace("<", "&lt;").replace(">", "&gt;")[:90]
+            fork_tag = " 🍴" if r.get("fork") else ""
+            out.append(
+                f"   <a href='{url}'><b>{name}</b></a>{fork_tag} "
+                f"— ⭐ {stars} · 🍴 {forks} · {lang}"
+            )
+            if desc:
+                out.append(f"     <i>{desc}</i>")
+        out.append("")
+
+    # ── Lenguajes ────────────────────────────────────────────────────────────
+    if data["languages"]:
+        items = list(data["languages"].items())[:6]
+        langs_str = " · ".join(f"{l} ({c})" for l, c in items)
+        out.append(f"💻 <b>Lenguajes:</b> {langs_str}\n")
+
+    # ── Keys ─────────────────────────────────────────────────────────────────
+    keys_line = []
+    if s["ssh_keys_count"]:
+        keys_line.append(f"🔑 SSH: {s['ssh_keys_count']}")
+    if s["gpg_keys_count"]:
+        keys_line.append(f"🔐 GPG: {s['gpg_keys_count']}")
+    if keys_line:
+        out.append(f"<b>Llaves públicas:</b> {' · '.join(keys_line)}\n")
+
+    # ── Gists recientes ──────────────────────────────────────────────────────
+    if data["gists"]:
+        out.append(f"📝 <b>Gists públicos</b> ({len(data['gists'])} recientes)")
+        for g in data["gists"][:3]:
+            desc = (g.get("description") or "(sin descripción)").strip()
+            desc = desc.replace("<", "&lt;").replace(">", "&gt;")[:60]
+            url = g.get("html_url", "")
+            out.append(f"   ▪️ <a href='{url}'>{desc}</a>")
+        out.append("")
+
+    # ── Footer ───────────────────────────────────────────────────────────────
+    if data.get("errors"):
+        for err in data["errors"]:
+            out.append(f"<i>{err}</i>")
+
+    out.append(f"🔗 <a href='{p.get('html_url', '')}'>Ver perfil completo en GitHub</a>")
+    return "\n".join(out)

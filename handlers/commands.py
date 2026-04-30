@@ -6,7 +6,8 @@ from ui.templates import (
     format_ip_result, format_phone_result_with_ip, format_username_result,
     format_email_result, format_exif_result, format_whatsapp_result,
     format_people_result, format_dns_result,
-    format_geoloc_coords, format_geoloc_ip, format_geoloc_webrtc, format_wifi_scan
+    format_geoloc_coords, format_geoloc_ip, format_geoloc_webrtc, format_wifi_scan,
+    format_github_recon,
 )
 from modules.ip_lookup import get_ip_info
 from modules.phone_lookup import analyze_phone
@@ -21,6 +22,7 @@ from modules.geolocation import (
     get_ip_geolocation, scan_wifi_networks,
     check_webrtc_leak, extract_google_maps_location
 )
+from modules.github_recon import github_recon
 from utils.apis import deploy_html, shorten_url, generate_text_report, upload_bytes
 from utils.access import load_authorized_users, add_user, remove_user, get_all_users
 from utils.rate_limit import check_rate_limit
@@ -226,21 +228,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # WiFi (acción inmediata, sin input)
-    if data == "menu_wifi":
-        context.user_data.pop("mode", None)
-        if not await check_rate(update, query.from_user.id):
-            return
-        await query.edit_message_text("📶 <b>Escaneando redes Wi-Fi…</b>", parse_mode="HTML")
-        wifi_data = await asyncio.to_thread(scan_wifi_networks)
-        response  = format_wifi_scan(wifi_data)
-        context.user_data["last_result"] = response
-        await context.bot.send_message(
-            query.message.chat_id, response,
-            parse_mode="HTML", reply_markup=back_btn(show_export=True)
-        )
-        return
-
     # Trackers (acción inmediata)
     if data in ("menu_geo", "menu_cam"):
         if not await check_rate(update, query.from_user.id):
@@ -301,6 +288,15 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "2️⃣ <b>Coordenadas</b> → <code>19.4326, -99.1332</code>\n"
             "3️⃣ <b>URL de Google Maps</b> → extracción de coords"
         ),
+        "menu_github": (
+            "💻 <b>GitHub Recon</b>\n\n"
+            "Envía un <b>username</b> de GitHub o un <b>email</b>:\n\n"
+            "<code>octocat</code>\n"
+            "<code>@octocat</code>\n"
+            "<code>user@example.com</code>\n\n"
+            "🔍 Devuelve: perfil, repos top, orgs, gists, llaves SSH/GPG y "
+            "<b>emails leakeados en commits públicos</b>."
+        ),
     }
 
     if data in _prompts:
@@ -358,6 +354,11 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif mode == "menu_people":
             data = await asyncio.to_thread(search_people, text.strip())
             response = format_people_result(data)
+
+        elif mode == "menu_github":
+            # github_recon es async nativo (httpx) → await directo, sin to_thread
+            data = await github_recon(text.strip())
+            response = format_github_recon(data)
 
         elif mode == "menu_geoloc":
             clean = text.strip()
