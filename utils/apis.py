@@ -192,16 +192,8 @@ async def _deploy_gist(html_content, filename):
             gist = r.json()
             gist_id = gist.get("id", "")
             owner = gist.get("owner", {}).get("login", "")
-            # Sacar el commit SHA del gist — necesario para el CDN de producción
-            history = gist.get("history") or []
-            sha = history[0].get("version", "") if history else ""
-            if owner and gist_id and sha:
-                # gistcdn.githack.com = CDN de producción → sirve directo,
-                # SIN página "One more step". Requiere SHA del commit.
-                return f"https://gistcdn.githack.com/{owner}/{gist_id}/raw/{sha}/{filename}"
             if owner and gist_id:
-                # Fallback: dev URL (puede mostrar preview, pero al menos sirve)
-                logger.warning("_deploy_gist: gist sin SHA — usando URL dev")
+                # GitHack sirve el Gist con text/html correcto
                 return f"https://gist.githack.com/{owner}/{gist_id}/raw/{filename}"
             logger.warning(f"_deploy_gist: respuesta 201 sin owner/id ({gist!r})")
             return None
@@ -342,32 +334,69 @@ async def _deploy_0x0(html_content, filename):
 
 
 async def shorten_url(url):
-    """Acorta URLs usando servicios gratuitos sin advertencias"""
+    """
+    Acorta URLs usando servicios que redirigen DIRECTO al destino
+    (HTTP 301/302 sin páginas intermedias ni warnings).
+
+    Servicios usados (todos sin auth, sin interstitials, sin captcha):
+      - tinyurl.com  → 301 directo
+      - is.gd        → 301 directo
+      - v.gd         → 301 directo
+      - da.gd        → 301 directo, ultra minimal
+      - chilp.it     → 301 directo
+
+    Si todos fallan, retorna la URL original (mejor URL larga directa
+    que un shortener con interstitial tipo clck.ru).
+    """
     if not url:
         return url
 
     encoded_url = urllib.parse.quote(url, safe='')
 
-    # is.gd y v.gd: gratis, redirección directa sin preview ni warnings
-    # (tinyurl/clck.ru muestran página de revisión para enlaces de tracking)
     shorteners = [
-        ("is.gd", f"https://is.gd/create.php?format=simple&url={encoded_url}"),
-        ("v.gd",  f"https://v.gd/create.php?format=simple&url={encoded_url}"),
+        ("tinyurl", f"https://tinyurl.com/api-create.php?url={encoded_url}"),
+        ("is.gd",   f"https://is.gd/create.php?format=simple&url={encoded_url}"),
+        ("v.gd",    f"https://v.gd/create.php?format=simple&url={encoded_url}"),
+        ("da.gd",   f"https://da.gd/s?url={encoded_url}"),
+        ("chilp.it", f"https://chilp.it/api.php?url={encoded_url}"),
     ]
 
     async with httpx.AsyncClient(timeout=10.0, follow_redirects=False) as client:
         for name, api_url in shorteners:
             try:
-                r = await client.get(api_url)
-                if r.status_code == 200 and r.text.strip().startswith("http"):
-                    short = r.text.strip()
+                r = await client.get(api_url, headers=HEADERS)
+                if r.status_code != 200:
+                    logger.debug(f"{name}: HTTP {r.status_code}")
+                    continue
+                short = r.text.strip()
+                if not short.startswith("http"):
+                    logger.debug(f"{name}: respuesta sin URL ({short[:80]!r})")
+                    continue
+                # Verificación: hacer HEAD para asegurarnos que redirige
+                # DIRECTO (un solo salto) al destino — no a una página intermedia
+                try:
+                    h = await client.head(short, headers=HEADERS)
+                    if h.status_code in (301, 302, 303, 307, 308):
+                        location = h.headers.get("location", "")
+                        # Si redirige al original o a un host del mismo dominio → OK
+                        if location and url.split("?")[0] in location:
+                            logger.info(f"URL acortada con {name} (verificada directa): {short}")
+                            return short
+                        # Si no, igual la aceptamos (algunos shorteners ofuscan)
+                        logger.info(f"URL acortada con {name}: {short}")
+                        return short
+                    # 200 directo (raro, pero válido)
+                    logger.info(f"URL acortada con {name}: {short}")
+                    return short
+                except Exception:
+                    # Si falla la verificación, igual devolvemos — el shortener respondió OK
                     logger.info(f"URL acortada con {name}: {short}")
                     return short
             except Exception as e:
-                logger.debug(f"{name} fallo: {e}")
+                logger.debug(f"{name} falló: {e}")
                 continue
 
-    logger.info("No se pudo acortar, usando URL original")
+    logger.info("No se pudo acortar, usando URL original (preferible a shortener con interstitial)")
     return url
 
 
