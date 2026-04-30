@@ -230,31 +230,41 @@ async def get_fb_recovery_hints(query: str) -> dict:
             # significa que la cuenta existe → extraer datos
             html_lower = html.lower()
 
-            # Keywords en varios idiomas que indican que cargó la recovery page
-            found_indicators = [
-                # Inglés
-                "recover your account", "how do you want to login",
-                "send_code", "find your account", "identify your account",
-                "confirm your identity", "confirmation code",
-                "we found your account", "reset your password",
-                # Español
-                "recuperar tu cuenta", "recuperar cuenta",
+            # Keywords paso 1: "¿es tu cuenta?" Y paso 2: opciones de recovery
+            step1_indicators = [
+                # Inglés — paso 1 (account found, confirm)
+                "is this your account", "this is my account",
+                "we found your account", "find your account",
+                "identify your account", "is this you",
+                # Español — paso 1
+                "¿esta es tu cuenta", "esta es mi cuenta",
                 "encontramos tu cuenta", "identificar tu cuenta",
+                # Portugués — paso 1
+                "encontramos sua conta", "essa é sua conta",
+            ]
+            step2_indicators = [
+                # Inglés — paso 2 (recovery options con hints)
+                "recover your account", "how do you want to login",
+                "send_code", "confirm your identity", "confirmation code",
+                "reset your password", "send_confirmation",
+                # Español — paso 2
+                "recuperar tu cuenta", "recuperar cuenta",
                 "código de confirmación", "cómo quieres",
                 "restablecer tu contraseña",
-                # Portugués
-                "recuperar sua conta", "encontramos sua conta",
-                # Indicadores estructurales (HTML)
-                "checkpoint", '"recovery"', "send_to",
-                "recover_account", "confirmation_code",
+                # Portugués — paso 2
+                "recuperar sua conta",
+                # Estructurales
+                "checkpoint", "recover_account", "confirmation_code",
+                '"recovery"', "send_to",
             ]
+            all_indicators = step1_indicators + step2_indicators
 
-            # Extraer patrones directamente del HTML (independiente de keywords)
+            # Extraer patrones de hints directamente (independiente de keywords)
             em_m = re.search(r'>([a-zA-Z0-9][\w.*•]*@[\w.*•]+\.[a-z]{2,})<', html)
             ph_m = re.search(r'>(\+?[0-9\s•·\*]{4,}\d{2})<', html)
 
             page_found = (
-                any(kw in html_lower for kw in found_indicators)
+                any(kw in html_lower for kw in all_indicators)
                 or "recover_account" in r2.url.path
                 or em_m is not None
                 or ph_m is not None
@@ -281,10 +291,60 @@ async def get_fb_recovery_hints(query: str) -> dict:
                 if uid_m:
                     out["user_id"] = uid_m.group(1)
 
+                # Si ya tenemos hints en la primera respuesta, listo
                 if em_m:
                     out["obfuscated_email"] = em_m.group(1).strip()
                 if ph_m:
                     out["obfuscated_phone"] = ph_m.group(1).strip()
+
+                # Si no hay hints aún, hacer el segundo POST para confirmar la cuenta
+                # y llegar a la página de opciones de recovery (donde aparecen los hints)
+                if not out["obfuscated_email"] and not out["obfuscated_phone"]:
+                    uid_val = out.get("user_id")
+                    on_step1 = any(kw in html_lower for kw in step1_indicators)
+
+                    if uid_val or on_step1:
+                        await asyncio.sleep(1.0)
+
+                        # Reusar tokens CSRF de la primera respuesta
+                        lsd_m2     = re.search(r'name="lsd"\s+value="([^"]+)"',     html)
+                        jazoest_m2 = re.search(r'name="jazoest"\s+value="([^"]+)"', html)
+                        fb_dtsg_m2 = re.search(r'name="fb_dtsg"\s+value="([^"]+)"', html)
+
+                        data2 = {"did_submit": "1"}
+                        if uid_val:
+                            data2["c[0]"] = uid_val
+                        if lsd_m2:     data2["lsd"]     = lsd_m2.group(1)
+                        if jazoest_m2: data2["jazoest"] = jazoest_m2.group(1)
+                        if fb_dtsg_m2: data2["fb_dtsg"] = fb_dtsg_m2.group(1)
+
+                        try:
+                            r3 = await client.post(
+                                base_url + "?ctx=recover",
+                                data=data2,
+                                headers={
+                                    **minimal_headers,
+                                    "Content-Type": "application/x-www-form-urlencoded",
+                                    "Origin":       "https://" + base_url.split("/")[2],
+                                    "Referer":      base_url + "?ctx=recover",
+                                },
+                            )
+                            if r3.status_code == 200:
+                                html2 = r3.text or ""
+                                em_m2 = re.search(
+                                    r'>([a-zA-Z0-9][\w.*•]*@[\w.*•]+\.[a-z]{2,})<',
+                                    html2
+                                )
+                                ph_m2 = re.search(
+                                    r'>(\+?[0-9\s•·\*]{4,}\d{2})<',
+                                    html2
+                                )
+                                if em_m2:
+                                    out["obfuscated_email"] = em_m2.group(1).strip()
+                                if ph_m2:
+                                    out["obfuscated_phone"] = ph_m2.group(1).strip()
+                        except Exception as e2:
+                            logger.debug(f"FB recovery paso 2: {e2}")
             else:
                 logger.debug(f"FB recovery HTML snippet: {html[:500]}")
                 out["error"] = "FB no encontró cuenta o respuesta no parseable"
