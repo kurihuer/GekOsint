@@ -854,3 +854,111 @@ def format_github_recon(data: dict) -> str:
 
     out.append(f"🔗 <a href='{p.get('html_url', '')}'>Ver perfil completo en GitHub</a>")
     return "\n".join(out)
+
+
+def format_ig_osint(data: dict) -> str:
+    """Formatea el resultado de modules.ig_osint.ig_lookup()."""
+    out: list[str] = []
+    out.append(f"📷 <b>IG OSINT — @{data.get('input', '?')}</b>")
+    out.append("━━━━━━━━━━━━━━━━━━━━━━━━")
+
+    if data.get("session"):
+        out.append(f"🔐 <i>Sesión: {data['session']}</i>")
+    out.append("")
+
+    if not data.get("found"):
+        for err in data.get("errors", []):
+            out.append(f"❌ {err}")
+        if data.get("recovery", {}).get("error"):
+            out.append(f"❌ Recovery: {data['recovery']['error']}")
+        return "\n".join(out)
+
+    p = data.get("profile") or {}
+    rec = data.get("recovery") or {}
+
+    # ── Perfil base ──────────────────────────────────────────────────────────
+    if p:
+        out.append("👤 <b>Perfil</b>")
+        if p.get("full_name"):
+            name = p["full_name"].replace("<", "&lt;").replace(">", "&gt;")
+            out.append(f"   ▪️ Nombre: <b>{name}</b>")
+        if p.get("user_id"):
+            out.append(f"   ▪️ User ID: <code>{p['user_id']}</code>")
+
+        flags = []
+        if p.get("is_verified"):    flags.append("✅ verificada")
+        if p.get("is_private"):     flags.append("🔒 privada")
+        if p.get("is_business"):    flags.append("🏢 business")
+        if p.get("has_highlights"): flags.append("⭐ highlights")
+        if flags:
+            out.append(f"   ▪️ Estado: {' · '.join(flags)}")
+
+        if p.get("business_category"):
+            out.append(f"   ▪️ Categoría: {p['business_category']}")
+        if p.get("biography"):
+            bio = p["biography"][:240].replace("<", "&lt;").replace(">", "&gt;")
+            out.append(f"   ▪️ Bio: <i>{bio}</i>")
+        if p.get("external_url"):
+            out.append(f"   ▪️ Link: {p['external_url']}")
+        out.append("")
+
+        # ── Stats ────────────────────────────────────────────────────────────
+        out.append("📊 <b>Estadísticas</b>")
+        out.append(
+            f"   👥 {p.get('followers', 0):,} seguidores · "
+            f"sigue a {p.get('followees', 0):,}"
+        )
+        out.append(
+            f"   📷 {p.get('posts_count', 0):,} posts · "
+            f"📺 {p.get('igtv_count', 0)} IGTV"
+        )
+        out.append("")
+
+    # ── Recovery hints (la joya) ─────────────────────────────────────────────
+    if rec.get("found"):
+        out.append("🎯 <b>Recovery hints</b> (técnica Toutatis)")
+        if rec.get("obfuscated_email"):
+            out.append(f"   📧 Email: <code>{rec['obfuscated_email']}</code>")
+        if rec.get("obfuscated_phone"):
+            out.append(f"   📱 Phone: <code>{rec['obfuscated_phone']}</code>")
+        out.append(
+            "   <i>(Hints parciales del email/teléfono asociados al recovery)</i>"
+        )
+        out.append("")
+    elif rec.get("error"):
+        out.append(f"🎯 <b>Recovery hints:</b> <i>{rec['error']}</i>\n")
+
+    # ── Posts recientes ──────────────────────────────────────────────────────
+    posts = (p or {}).get("recent_posts") or []
+    if posts:
+        out.append(f"📸 <b>Últimos posts</b> ({len(posts)})")
+        for i, post in enumerate(posts, 1):
+            tipo = "🎥" if post.get("is_video") else "🖼️"
+            date = (post.get("date") or "")[:10]
+            likes = post.get("likes", 0)
+            comments = post.get("comments", 0)
+            out.append(
+                f"   {i}. {tipo} <a href='{post['url']}'>{post['shortcode']}</a> "
+                f"· {date} · ❤️ {likes:,} · 💬 {comments:,}"
+            )
+            if post.get("location"):
+                loc = post["location"].replace("<", "&lt;").replace(">", "&gt;")
+                out.append(f"      📍 <b>{loc}</b>")
+            if post.get("caption"):
+                cap = post["caption"][:80].replace("<", "&lt;").replace(">", "&gt;")
+                out.append(f"      <i>{cap}</i>")
+        out.append("")
+    elif p and p.get("is_private"):
+        out.append("🔒 <i>Perfil privado — no se pueden ver posts.</i>\n")
+
+    # ── Errores no fatales ───────────────────────────────────────────────────
+    for err in data.get("errors", []):
+        out.append(f"⚠️ <i>{err}</i>")
+
+    # ── Footer ───────────────────────────────────────────────────────────────
+    if p:
+        out.append(
+            f"🔗 <a href='https://www.instagram.com/{p.get('username','')}/'>"
+            f"Ver perfil en Instagram</a>"
+        )
+    return "\n".join(out)

@@ -32,6 +32,14 @@ ABUSEIPDB_KEY     = os.getenv("ABUSEIPDB_KEY", "")
 SHODAN_API_KEY    = os.getenv("SHODAN_API_KEY", "")
 GREYNOISE_API_KEY = os.getenv("GREYNOISE_API_KEY", "")
 
+# ── Instagram OSINT (cookies de sesión, NO password) ─────────────────────────
+# Cómo obtenerlas: logueate en instagram.com con cuenta dedicada,
+# DevTools → Application → Cookies → instagram.com → copiar valores.
+IG_USERNAME   = os.getenv("IG_USERNAME", "")
+IG_SESSIONID  = os.getenv("IG_SESSIONID", "")
+IG_DS_USER_ID = os.getenv("IG_DS_USER_ID", "")
+IG_CSRFTOKEN  = os.getenv("IG_CSRFTOKEN", "")
+
 # ============================================
 # CONTROL DE ACCESO
 # Todos los IDs se gestionan via ADMIN_ID / GEKOSINT_ALLOWED

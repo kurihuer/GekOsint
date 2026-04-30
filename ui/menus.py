@@ -24,7 +24,7 @@ def main_menu():
             InlineKeyboardButton("🧑‍💼 People Search", callback_data='menu_people')
         ],
         [
-            InlineKeyboardButton("🛰️ Geo Localización", callback_data='menu_geoloc'),
+            InlineKeyboardButton("📷 IG OSINT", callback_data='menu_ig'),
             InlineKeyboardButton("💻 GitHub Recon", callback_data='menu_github')
         ],
         [

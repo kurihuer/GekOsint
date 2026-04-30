@@ -7,7 +7,7 @@ from ui.templates import (
     format_email_result, format_exif_result, format_whatsapp_result,
     format_people_result, format_dns_result,
     format_geoloc_coords, format_geoloc_ip, format_geoloc_webrtc, format_wifi_scan,
-    format_github_recon,
+    format_github_recon, format_ig_osint,
 )
 from modules.ip_lookup import get_ip_info
 from modules.phone_lookup import analyze_phone
@@ -23,6 +23,7 @@ from modules.geolocation import (
     check_webrtc_leak, extract_google_maps_location
 )
 from modules.github_recon import github_recon
+from modules.ig_osint import ig_lookup, check_ig_rate_limit
 from utils.apis import deploy_html, shorten_url, generate_text_report, upload_bytes
 from utils.access import load_authorized_users, add_user, remove_user, get_all_users
 from utils.rate_limit import check_rate_limit
@@ -167,8 +168,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🖼️ <b>EXIF Data</b>        — Metadatos, GPS, cámara\n"
         f"🧑‍💼 <b>People Search</b>    — Nombre → redes, dorks, OSINT\n"
         f"🌐 <b>Domain/DNS</b>       — WHOIS, registros, seguridad\n"
-        f"🛰️ <b>Geo Localización</b>  — IP, coordenadas, Maps, WebRTC\n"
-        f"📶 <b>WiFi Scanner</b>     — Redes cercanas\n\n"
+        f"📷 <b>IG OSINT</b>         — Perfil, posts, recovery hints (email/phone)\n"
+        f"💻 <b>GitHub Recon</b>     — Perfil, repos, emails leakeados en commits\n\n"
         f"<i>🔒 {total} usuario(s) autorizado(s)</i>"
     )
     if update.callback_query:
@@ -297,6 +298,16 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "🔍 Devuelve: perfil, repos top, orgs, gists, llaves SSH/GPG y "
             "<b>emails leakeados en commits públicos</b>."
         ),
+        "menu_ig": (
+            "📷 <b>IG OSINT</b>\n\n"
+            "Envía el <b>username</b> de Instagram (sin @):\n\n"
+            "<code>cristiano</code>\n"
+            "<code>nasa</code>\n\n"
+            "🔍 Devuelve: perfil, posts recientes con geotags, y "
+            "<b>email/teléfono parcialmente ofuscados</b> (técnica Toutatis).\n\n"
+            "⏳ <i>Rate limit anti-ban: 1 consulta cada 60s, 20/hora por usuario. "
+            "Es para que IG no bloquee la cuenta de sesión.</i>"
+        ),
     }
 
     if data in _prompts:
@@ -359,6 +370,19 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # github_recon es async nativo (httpx) → await directo, sin to_thread
             data = await github_recon(text.strip())
             response = format_github_recon(data)
+
+        elif mode == "menu_ig":
+            # Rate limiter dedicado a IG (separado del global del bot)
+            allowed, reason = check_ig_rate_limit(update.effective_user.id)
+            if not allowed:
+                response = (
+                    f"⏳ <b>IG OSINT — rate limit</b>\n\n"
+                    f"{reason}\n\n"
+                    f"<i>Esto protege la cuenta de sesión de bloqueos por IG.</i>"
+                )
+            else:
+                data = await ig_lookup(text.strip())
+                response = format_ig_osint(data)
 
         elif mode == "menu_geoloc":
             clean = text.strip()
@@ -438,33 +462,14 @@ async def document_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         out = BytesIO()
         await file_obj.download_to_memory(out)
-        img_bytes = out.getvalue()
-        data      = await asyncio.to_thread(get_exif, img_bytes)
-
-        filename = None
-        mime_type = None
-        if update.message.document:
-            filename = (update.message.document.file_name or "").strip() or None
-            mime_type = (update.message.document.mime_type or "").strip() or None
-
-        if not filename:
-            md5 = (data.get("hash") or {}).get("MD5") or "image"
-            filename = f"exif_{md5}.jpg"
-
-        if not mime_type:
-            guessed, _ = mimetypes.guess_type(filename)
-            mime_type = guessed or "application/octet-stream"
-
-        image_url = await upload_bytes(img_bytes, filename=filename, content_type=mime_type)
-        if image_url:
-            data["image_url"] = image_url
-
+        data = await asyncio.to_thread(get_exif, img_bytes)
         response = format_exif_result(data)
-
         context.user_data["last_result"] = response
         context.user_data.pop("mode", None)
-        await msg.edit_text(response, parse_mode="HTML", reply_markup=back_btn(show_export=True))
-
+        await msg.edit_text(
+            response, parse_mode="HTML",
+            disable_web_page_preview=True,
+            reply_markup=back_btn(show_export=True),
+        )
     except Exception as e:
-        logger.error(f"[EXIF] Error: {e}", exc_info=True)
         await msg.edit_text(f"❌ Error procesando imagen: {e}", reply_markup=back_btn())

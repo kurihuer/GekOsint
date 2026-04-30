@@ -6,3 +6,4 @@ phonenumbers==8.13.27
 Pillow==12.1.1
 dnspython==2.8.0
 aiolimiter>=1.1.0,<2
+instaloader>=4.13
