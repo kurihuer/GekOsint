@@ -185,27 +185,66 @@ async def _scrape_web(username: str, client: httpx.AsyncClient) -> dict | None:
 # ── Fallback RapidAPI (si hay clave) ──────────────────────────────────────────
 
 async def _rapidapi_lookup(username: str, client: httpx.AsyncClient) -> dict | None:
+    """
+    Intenta los 3 mejores endpoints de TikTok en RapidAPI en orden.
+    Todos usan la misma RAPIDAPI_KEY — solo cambia el host.
+    Orden: TiKWM (tiktok-scraper7) → ScrapTik → TokApi
+    """
     if not RAPIDAPI_KEY:
         return None
-    try:
-        r = await client.get(
+
+    # (url, host, parser_fn)
+    endpoints = [
+        # 1) TiKWM — tiktok-scraper7 (score 10, 888ms) — el que estaba antes
+        (
             "https://tiktok-scraper7.p.rapidapi.com/user/info",
-            params={"unique_id": username},
-            headers={
-                "X-RapidAPI-Key":  RAPIDAPI_KEY,
-                "X-RapidAPI-Host": "tiktok-scraper7.p.rapidapi.com",
-            },
-            timeout=15.0,
-        )
-        if r.status_code == 200:
-            d    = r.json()
-            info = (d.get("data") or {})
-            user  = info.get("user", {})
-            stats = info.get("stats", {})
-            if user.get("id"):
-                return {"user": user, "stats": stats, "_source": "rapidapi"}
-    except Exception as e:
-        logger.debug(f"TikTok RapidAPI error: {e}")
+            "tiktok-scraper7.p.rapidapi.com",
+            {"params": {"unique_id": username}},
+            lambda d: (
+                (d.get("data") or {}).get("user", {}),
+                (d.get("data") or {}).get("stats", {}),
+            ),
+        ),
+        # 2) ScrapTik — scraptik (score 9.9, 1150ms)
+        (
+            "https://scraptik.p.rapidapi.com/get-user",
+            "scraptik.p.rapidapi.com",
+            {"params": {"username": username}},
+            lambda d: (
+                d.get("user_info", {}).get("user", {}),
+                d.get("user_info", {}).get("stats", {}),
+            ),
+        ),
+        # 3) TokApi mobile — somjik (score 9.9, 1638ms)
+        (
+            "https://tokapi-mobile-version.p.rapidapi.com/v1/user",
+            "tokapi-mobile-version.p.rapidapi.com",
+            {"params": {"username": username, "region": "US"}},
+            lambda d: (
+                (d.get("user_info") or {}).get("user", {}),
+                (d.get("user_info") or {}).get("stats", {}),
+            ),
+        ),
+    ]
+
+    for url, host, req_kwargs, parser in endpoints:
+        try:
+            r = await client.get(
+                url,
+                headers={"X-RapidAPI-Key": RAPIDAPI_KEY, "X-RapidAPI-Host": host},
+                timeout=15.0,
+                **req_kwargs,
+            )
+            if r.status_code == 200:
+                d     = r.json()
+                user, stats = parser(d)
+                if user and user.get("id"):
+                    logger.debug(f"TikTok RapidAPI OK via {host}")
+                    return {"user": user, "stats": stats, "_source": f"rapidapi:{host}"}
+            logger.debug(f"TikTok RapidAPI {host}: HTTP {r.status_code}")
+        except Exception as e:
+            logger.debug(f"TikTok RapidAPI {host} error: {e}")
+
     return None
 
 
