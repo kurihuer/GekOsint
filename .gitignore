@@ -42,3 +42,8 @@ GekOsint2/
 HexSecGPT/
 check_bot.py
 install_hexsecgpt.bat
+
+# v6.1
+gekosint.db
+.claude/
+fb_debug_paso2.html

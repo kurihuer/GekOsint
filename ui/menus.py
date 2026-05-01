@@ -32,7 +32,8 @@ def main_menu():
             InlineKeyboardButton("📘 FB OSINT", callback_data='menu_fb')
         ],
         [
-            InlineKeyboardButton("📨 Email Recon (multi-plataforma)", callback_data='menu_emailrecon')
+            InlineKeyboardButton("📹 TikTok OSINT", callback_data='menu_tiktok'),
+            InlineKeyboardButton("📨 Email Recon",  callback_data='menu_emailrecon')
         ],
         [
             InlineKeyboardButton("ℹ️ Acerca de", callback_data='menu_about')
@@ -45,4 +46,6 @@ def back_btn(show_export=False):
     if show_export:
         btns.append([InlineKeyboardButton("📄 Exportar Reporte (.txt)", callback_data='export_txt')])
     btns.append([InlineKeyboardButton("⬅️ Volver al Menú Principal", callback_data='start')])
+    return InlineKeyboardMarkup(btns)
+, callback_data='start')])
     return InlineKeyboardMarkup(btns)

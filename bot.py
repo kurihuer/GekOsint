@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-GekOsint v6.0 — Punto de entrada principal.
+GekOsint v6.1 — Punto de entrada principal.
 """
 import logging
 import sys
@@ -15,9 +15,10 @@ from telegram.error import Conflict, NetworkError
 from config import BOT_TOKEN, PAGES_DIR, PUBLIC_URL
 from handlers.commands import (
     start, help_command, button_handler,
-    message_handler, document_handler, admin_command
+    message_handler, document_handler, admin_command, cancel_command
 )
 from utils.server import start_file_server, start_keep_alive
+from utils.database import init_db
 
 # ── UTF-8 en Windows ──────────────────────────────────────────────────────────
 if sys.platform == "win32":
@@ -68,9 +69,10 @@ def build_app():
 
     app = builder.build()
     app.add_error_handler(error_handler)
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("help",  help_command))
-    app.add_handler(CommandHandler("admin", admin_command))
+    app.add_handler(CommandHandler("start",  start))
+    app.add_handler(CommandHandler("help",   help_command))
+    app.add_handler(CommandHandler("admin",  admin_command))
+    app.add_handler(CommandHandler("cancel", cancel_command))
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.Document.IMAGE | filters.PHOTO, document_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
@@ -78,13 +80,17 @@ def build_app():
 
 
 def main():
-    logger.info("Iniciando GekOsint v6.0…")
-    print("\n[*] GekOsint v6.0 — Iniciando…")
+    logger.info("Iniciando GekOsint v6.1…")
+    print("\n[*] GekOsint v6.1 — Iniciando…")
+
+    # Inicializar base de datos SQLite
+    init_db()
 
     if not BOT_TOKEN or "tu_token" in BOT_TOKEN or len(BOT_TOKEN) < 20:
         print("\n[X] ERROR: Token no configurado.")
         print("    Configura GEKOSINT_TOKEN en .env o variables de entorno.")
         sys.exit(1)
+    print("[OK] DB inicializada.")
 
     env_name = "Cloud" if IS_CLOUD else ("Windows" if sys.platform == "win32" else "Linux/Mac")
     use_webhook = bool(IS_CLOUD and WEBHOOK_URL)
@@ -119,10 +125,8 @@ def main():
     else:
         logger.info("Modo Long Polling")
         print("[*] Modo: Long Polling")
-        try:
-            asyncio.run(app.bot.delete_webhook(drop_pending_updates=True))
-        except Exception:
-            pass
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
         app.run_polling(
             allowed_updates=Update.ALL_TYPES,
             drop_pending_updates=True,

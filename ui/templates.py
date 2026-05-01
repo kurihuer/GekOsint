@@ -433,12 +433,32 @@ def format_exif_result(data: dict) -> str:
 
     image_url = data.get("image_url")
     if image_url:
-        enc = urllib.parse.quote(image_url, safe="")
-        txt += render_section("BÚSQUEDA POR IMAGEN")
-        txt += f"<a href='https://lens.google.com/uploadbyurl?url={enc}'>Google Lens</a>"
-        txt += f" | <a href='https://yandex.com/images/search?rpt=imageview&url={enc}'>Yandex Images</a>"
-        txt += f" | <a href='https://tineye.com/search?url={enc}'>TinEye</a>"
-        txt += f" | <a href='https://www.bing.com/images/search?q=imgurl:{enc}&view=detailv2&iss=sbi'>Bing Visual Search</a>\n"
+        enc       = urllib.parse.quote(image_url, safe="")
+        has_face  = data.get("has_face", False)
+
+        txt += render_section("🔍 BÚSQUEDA INVERSA POR IMAGEN")
+        txt += (
+            f"<a href='https://lens.google.com/uploadbyurl?url={enc}'>🔎 Google Lens</a>"
+            f" | <a href='https://yandex.com/images/search?rpt=imageview&url={enc}'>🟡 Yandex</a>"
+            f" | <a href='https://tineye.com/search?url={enc}'>👁️ TinEye</a>"
+            f" | <a href='https://www.bing.com/images/search?q=imgurl:{enc}&view=detailv2&iss=sbi'>🔷 Bing</a>\n"
+        )
+
+        if has_face:
+            txt += render_section("🧠 BÚSQUEDA FACIAL DETECTADA")
+            txt += "⚠️ <b>Posible rostro humano detectado.</b>\n"
+            txt += "Motores especializados en reconocimiento facial:\n\n"
+            txt += (
+                f"<a href='https://facecheck.id'>🕵️ FaceCheck.ID</a>"
+                f" | <a href='https://pimeyes.com'>👤 PimEyes</a>"
+                f" | <a href='https://search4faces.com'>🔬 Search4Faces</a>\n\n"
+            )
+            txt += (
+                "<i>💡 Instrucciones: entrá al sitio, subí la imagen "
+                "manualmente para la búsqueda facial.</i>\n"
+            )
+        else:
+            txt += "<i>🧬 Sin indicios claros de rostro (skin tone check negativo).</i>\n"
 
     all_tags = data.get("all_tags", {})
     if all_tags and len(all_tags) > 5:
@@ -1179,6 +1199,94 @@ def format_email_recon(data: dict) -> str:
 
     not_found = [s for s in checked if not any(f["service"] == s for f in found)]
     if not_found:
-        out.append(f"\n<i>No registrado en: {', '.join(not_found)}</i>")
+        out.append("\n<i>No registrado en: " + ", ".join(not_found) + "</i>")
+
+    return "\n".join(out)
+
+
+# TikTok OSINT template
+
+def format_tiktok_osint(data: dict) -> str:
+    if data.get("error"):
+        username = data.get("username", "")
+        return (
+            "<b>TikTok OSINT - Error</b>\n\n"
+            + str(data["error"])
+            + "\n\n"
+            + f"Ver perfil: https://www.tiktok.com/@{username}"
+        )
+
+    out = []
+    out.append(render_header("TIKTOK OSINT"))
+
+    username = data.get("username", "?")
+    nickname = data.get("nickname", username)
+    uid      = data.get("user_id", "")
+
+    verified_badge = " (Verificado)" if data.get("verified") else ""
+    private_badge  = " [Privada]"    if data.get("private")  else " [Publica]"
+    out.append(f"<b>@{username}</b>{verified_badge}{private_badge}")
+    out.append(f"<b>Nombre:</b> {nickname}")
+    if uid:
+        out.append(f"<b>User ID:</b> <code>{uid}</code>")
+    out.append(f"Perfil: https://www.tiktok.com/@{username}")
+    out.append("")
+
+    bio = (data.get("bio") or "").strip()
+    if bio:
+        out.append(render_section("BIO"))
+        out.append(f"<i>{bio[:300]}</i>")
+    if data.get("bio_link"):
+        out.append(f"<b>Link en bio:</b> <code>{data['bio_link']}</code>")
+    out.append("")
+
+    out.append(render_section("ESTADISTICAS"))
+    out.append(f"<b>Seguidores:</b>    {data.get('followers','?')}")
+    out.append(f"<b>Siguiendo:</b>     {data.get('following','?')}")
+    out.append(f"<b>Likes totales:</b> {data.get('total_likes','?')}")
+    out.append(f"<b>Videos:</b>        {data.get('video_count','?')}")
+
+    eng = data.get("engagement_est")
+    if eng:
+        try:
+            v = float(eng.strip("%"))
+            em = "fuerte" if v >= 5 else ("normal" if v >= 2 else "bajo")
+        except Exception:
+            em = ""
+        out.append(f"<b>Engagement est.:</b> {eng} ({em})")
+
+    try:
+        fr = int(data.get("_followers_raw", 0) or 0)
+        if   fr >= 1_000_000: tier = "Mega-influencer (1M+)"
+        elif fr >= 100_000:   tier = "Macro-influencer (100K+)"
+        elif fr >= 10_000:    tier = "Micro-influencer (10K+)"
+        elif fr >= 1_000:     tier = "Nano-influencer (1K+)"
+        else:                  tier = "Cuenta pequena (<1K)"
+        out.append(f"<b>Tier:</b> {tier}")
+    except Exception:
+        pass
+
+    out.append(render_section("CUENTA"))
+    out.append(f"<b>Verificado:</b> {'Si' if data.get('verified') else 'No'}")
+    out.append(f"<b>Privada:</b>    {'Si' if data.get('private') else 'No'}")
+    if data.get("region"):
+        out.append(f"<b>Region:</b>     {data['region']}")
+    if data.get("create_time"):
+        out.append(f"<b>Creado:</b>     {data['create_time']}")
+
+    if data.get("commerce"):
+        c = data["commerce"]
+        out.append(render_section("CUENTA COMERCIAL"))
+        out.append(f"  Ads:   {'Si' if c.get('ad_authorized') else 'No'}")
+        out.append(f"  Lives: {'Si' if c.get('live_authorized') else 'No'}")
+
+    note = data.get("note","")
+    src  = data.get("_source","")
+    if note:
+        out.append(f"<i>{note}</i>")
+    if src == "html_regex":
+        out.append("<i>Datos parciales - scraping limitado por TikTok.</i>")
+    elif src == "rapidapi":
+        out.append("<i>Datos obtenidos via RapidAPI.</i>")
 
     return "\n".join(out)

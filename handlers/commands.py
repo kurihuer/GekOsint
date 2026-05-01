@@ -6,33 +6,30 @@ from ui.templates import (
     format_ip_result, format_phone_result_with_ip, format_username_result,
     format_email_result, format_exif_result, format_whatsapp_result,
     format_people_result, format_dns_result,
-    format_geoloc_coords, format_geoloc_ip, format_geoloc_webrtc, format_wifi_scan,
     format_github_recon, format_ig_osint,
     format_gmail_osint, format_fb_osint,
-    format_email_recon,
+    format_email_recon, format_tiktok_osint,
 )
 from modules.ip_lookup import get_ip_info
 from modules.phone_lookup import analyze_phone
 from modules.username_search import search_username
 from modules.email_analysis import analyze_email
 from modules.tracking import generate_tracking_page
-from modules.exif_extract import get_exif
+from modules.exif_extract import get_exif, detect_face_heuristic
 from modules.whatsapp_osint import analyze_whatsapp
 from modules.people_search import search_people
 from modules.dns_lookup import get_dns_info
-from modules.geolocation import (
-    get_ip_geolocation, scan_wifi_networks,
-    check_webrtc_leak, extract_google_maps_location
-)
 from modules.github_recon import github_recon
 from modules.ig_osint import ig_lookup, check_ig_rate_limit
 from modules.gmail_osint import gmail_lookup, check_gmail_rate_limit
 from modules.fb_osint import fb_lookup, check_fb_rate_limit
 from modules.email_recon import email_recon, check_email_recon_rate_limit
+from modules.tiktok_osint import tiktok_lookup, check_tiktok_rate_limit
 from utils.apis import deploy_html, shorten_url, generate_text_report, upload_bytes
 from utils.access import load_authorized_users, add_user, remove_user, get_all_users
 from utils.rate_limit import check_rate_limit
 from utils.parse import extract_phone_and_target
+from utils.database import log_query, upsert_user, log_error, get_global_stats
 from config import BOT_TOKEN, logger, ADMIN_ID
 from datetime import datetime
 import re
@@ -159,10 +156,23 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await update.message.reply_text("❌ No se pudo eliminar (puede ser usuario inicial o admin).")
     elif cmd == "stats":
+        stats = get_global_stats()
+        top_txt = ""
+        for name, cnt in (stats.get("top_modules") or []):
+            top_txt += f"   ▪️ {name}: <b>{cnt}</b>\n"
         await update.message.reply_text(
-            f"📊 <b>Estadísticas GekOsint</b>\n"
-            f"👥 Usuarios autorizados: {len(get_all_users())}\n",
-            parse_mode="HTML"
+            f"📊 <b>Estadísticas GekOsint v6.1</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"👥 <b>Usuarios autorizados:</b> {len(get_all_users())}\n"
+            f"👤 <b>Usuarios en DB:</b>       {stats.get('total_users', 0)}\n"
+            f"🟢 <b>Activos (24h):</b>        {stats.get('active_24h', 0)}\n\n"
+            f"📋 <b>Consultas totales:</b>     {stats.get('total', 0)}\n"
+            f"📅 <b>Últimas 24h:</b>           {stats.get('last_24h', 0)}\n"
+            f"📆 <b>Última semana:</b>         {stats.get('last_7d', 0)}\n"
+            f"✅ <b>Tasa de éxito (24h):</b>  {stats.get('success_rate', 100)}%\n"
+            f"❌ <b>Errores (24h):</b>         {stats.get('errors_24h', 0)}\n\n"
+            f"🏆 <b>Top módulos:</b>\n{top_txt}",
+            parse_mode="HTML",
         )
     elif cmd == "fbdebug":
         # /admin fbdebug → manda los HTMLs de FB recovery guardados
@@ -264,11 +274,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check_access(update, context):
         return
 
-    user  = update.effective_user.first_name
+    tg_user = update.effective_user
+    upsert_user(tg_user.id, tg_user.username or "", tg_user.full_name or "")
+
     total = len(get_all_users())
     txt = (
-        f"👋 <b>Bienvenido, {user}</b>\n\n"
-        f"🛡️ <b>GekOsint v6.0</b> — Sistema de Inteligencia OSINT\n"
+        f"👋 <b>Bienvenido, {tg_user.first_name}</b>\n\n"
+        f"🛡️ <b>GekOsint v6.1</b> — Sistema de Inteligencia OSINT\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
         f"🔍 <b>IP Lookup</b>        — Geoloc, WHOIS, puertos, blacklist\n"
         f"📱 <b>Phone Intel</b>      — Caller ID, spam, operadora, región\n"
@@ -277,14 +289,16 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"💚 <b>WhatsApp OSINT</b>   — Registro, spam, Business\n"
         f"🌍 <b>Geo Tracker</b>      — Enlace trampa de ubicación\n"
         f"📸 <b>Camera Trap</b>      — Captura de cámara remota\n"
-        f"🖼️ <b>EXIF Data</b>        — Metadatos, GPS, cámara\n"
+        f"🖼️ <b>EXIF + Face Search</b> — Metadatos, GPS + búsqueda por rostro\n"
         f"🧑‍💼 <b>People Search</b>    — Nombre → redes, dorks, OSINT\n"
         f"🌐 <b>Domain/DNS</b>       — WHOIS, registros, seguridad\n"
         f"📷 <b>IG OSINT</b>         — Perfil, posts, recovery hints (email/phone)\n"
         f"💻 <b>GitHub Recon</b>     — Perfil, repos, emails leakeados en commits\n"
         f"📧 <b>Gmail OSINT</b>      — Existencia, recovery hints, People API, YouTube\n"
-        f"📘 <b>FB OSINT</b>         — User ID, foto, recovery hints (email/phone)\n\n"
-        f"<i>🔒 {total} usuario(s) autorizado(s)</i>"
+        f"📘 <b>FB OSINT</b>         — User ID, foto, recovery hints (email/phone)\n"
+        f"📹 <b>TikTok OSINT</b>     — Perfil, stats, engagement, tier de influencer\n"
+        f"📨 <b>Email Recon</b>      — Multi-plataforma: 12+ servicios en paralelo\n\n"
+        f"<i>🔒 {total} usuario(s) autorizado(s) · 16 módulos activos</i>"
     )
     if update.callback_query:
         await update.callback_query.edit_message_text(txt, reply_markup=main_menu(), parse_mode="HTML")
@@ -455,6 +469,17 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "extrae <b>hints adicionales</b> como username público asociado.\n\n"
             "⏳ <i>Rate limit suave: 1/30s, 30/hora.</i>"
         ),
+        "menu_tiktok": (
+            "📹 <b>TikTok OSINT</b>\n\n"
+            "Envía un <b>username</b>, @username o URL de TikTok:\n\n"
+            "<code>cristiano</code>\n"
+            "<code>@cristiano</code>\n"
+            "<code>https://www.tiktok.com/@cristiano</code>\n\n"
+            "🔍 Devuelve: perfil completo, seguidores, likes totales, "
+            "cantidad de videos, <b>engagement estimado</b>, tier de influencer "
+            "(nano/micro/macro/mega), cuenta comercial, región y fecha de creación.\n\n"
+            "⏳ <i>Rate limit: 1/45s, 20/hora por usuario.</i>"
+        ),
     }
 
     if data in _prompts:
@@ -559,45 +584,30 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif mode == "menu_emailrecon":
             allowed, reason = check_email_recon_rate_limit(update.effective_user.id)
             if not allowed:
-                response = (
-                    f"⏳ <b>Email Recon — rate limit</b>\n\n{reason}"
-                )
+                response = f"⏳ <b>Email Recon — rate limit</b>\n\n{reason}"
             else:
                 data = await email_recon(text.strip())
                 response = format_email_recon(data)
 
-        elif mode == "menu_geoloc":
-            clean = text.strip()
-            if re.match(r"^-?\d+\.?\d*,\s*-?\d+\.?\d*$", clean):
-                lat, lon = map(float, clean.split(","))
-                response = format_geoloc_coords({
-                    "type": "coordinates", "lat": lat, "lon": lon,
-                    "map_url": f"https://www.google.com/maps?q={lat},{lon}"
-                })
-            elif clean.startswith("http"):
-                if "maps.google" in clean or "goo.gl" in clean:
-                    coords = extract_google_maps_location(clean)
-                    if coords:
-                        response = format_geoloc_coords({
-                            "type": "google_maps_url",
-                            "lat": coords["lat"], "lon": coords["lon"],
-                            "map_url": coords["map_url"]
-                        })
-                    else:
-                        response = "❌ No se pudieron extraer coordenadas del enlace."
-                else:
-                    webrtc = await asyncio.to_thread(check_webrtc_leak, clean)
-                    response = format_geoloc_webrtc({"type": "webrtc_check", "url": clean, "result": webrtc})
-            elif re.match(r"^(\d{1,3}\.){3}\d{1,3}$", clean):
-                data = await asyncio.to_thread(get_ip_geolocation, clean)
-                response = format_geoloc_ip(data)
+        elif mode == "menu_tiktok":
+            allowed, reason = check_tiktok_rate_limit(update.effective_user.id)
+            if not allowed:
+                response = (
+                    f"⏳ <b>TikTok OSINT — rate limit</b>\n\n"
+                    f"{reason}\n\n"
+                    f"<i>Rate limit para no sobrecargar la IP del servidor.</i>"
+                )
             else:
-                response = "❌ Formato no reconocido.\nEnvía: IP, coordenadas (<code>lat,lon</code>), o URL de Google Maps."
-            context.user_data["last_result"] = response
+                data = await tiktok_lookup(text.strip())
+                response = format_tiktok_osint(data)
 
         elif mode == "menu_exif":
+            # El usuario mandó texto en vez de imagen
             await msg.edit_text(
-                "🖼️ <b>EXIF Data</b>\n\nEnvía la imagen como <b>DOCUMENTO</b> (sin compresión).",
+                "🖼️ <b>EXIF + Face Search</b>\n\n"
+                "Envía la imagen como <b>DOCUMENTO</b> (sin compresión).\n"
+                "<i>No la envíes como foto normal o Telegram la comprimirá y "
+                "perderás los metadatos EXIF.</i>",
                 parse_mode="HTML", reply_markup=back_btn()
             )
             return
@@ -605,6 +615,12 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if response is None:
             await msg.delete()
             return
+
+        # Logging a DB
+        try:
+            log_query(update.effective_user.id, mode, text.strip()[:100], success=True)
+        except Exception:
+            pass
 
         context.user_data["last_result"] = response
         context.user_data.pop("mode", None)
@@ -616,7 +632,11 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     except Exception as e:
         logger.error(f"[handler] Error en mode={mode}: {e}", exc_info=True)
-        await msg.edit_text(f"❌ Error: {e}", reply_markup=back_btn())
+        try:
+            log_error(mode, str(e))
+        except Exception:
+            pass
+        await msg.edit_text(f"❌ Error inesperado: <code>{e}</code>", parse_mode="HTML", reply_markup=back_btn())
 
 
 # ── Document/Photo handler (EXIF) ─────────────────────────────────────────────
@@ -629,11 +649,14 @@ async def document_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await check_rate(update, update.effective_user.id):
         return
 
-    msg = await update.message.reply_text("⏳ <b>Descargando y analizando metadatos…</b>", parse_mode="HTML")
+    msg = await update.message.reply_text(
+        "⏳ <b>Descargando y analizando imagen…</b>\n"
+        "<i>Extrayendo EXIF + detectando rostro…</i>",
+        parse_mode="HTML"
+    )
 
     try:
         from io import BytesIO
-        import mimetypes
         if update.message.document:
             file_obj = await update.message.document.get_file()
         elif update.message.photo:
@@ -642,16 +665,85 @@ async def document_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await msg.edit_text("❌ Por favor envía una imagen.", reply_markup=back_btn())
             return
 
-        out = BytesIO()
-        await file_obj.download_to_memory(out)
+        # ── Descarga ──────────────────────────────────────────────────────
+        buf = BytesIO()
+        await file_obj.download_to_memory(buf)
+        img_bytes = buf.getvalue()          # ← BUG FIX: antes era img_bytes (undefined)
+
+        if not img_bytes:
+            await msg.edit_text("❌ No se pudo descargar la imagen.", reply_markup=back_btn())
+            return
+
+        # ── EXIF ──────────────────────────────────────────────────────────
         data = await asyncio.to_thread(get_exif, img_bytes)
+
+        # ── Detección de rostro (heurística skin-tone Kovac) ──────────────
+        has_face = await asyncio.to_thread(detect_face_heuristic, img_bytes)
+        data["has_face"] = has_face
+
+        # ── Subir imagen para búsqueda inversa ────────────────────────────
+        await msg.edit_text(
+            "⏳ <b>Subiendo imagen para búsqueda inversa…</b>",
+            parse_mode="HTML"
+        )
+        # Determinar extensión
+        fmt = (data.get("basic") or {}).get("Format", "JPEG").upper()
+        ext_map = {"JPEG": "jpg", "PNG": "png", "WEBP": "webp",
+                   "GIF": "gif", "BMP": "bmp", "TIFF": "tiff"}
+        ext      = ext_map.get(fmt, "jpg")
+        ct_map   = {"jpg": "image/jpeg", "png": "image/png",
+                    "webp": "image/webp", "gif": "image/gif"}
+        ct       = ct_map.get(ext, "image/jpeg")
+        fname    = f"gekosint_exif_{update.effective_user.id}.{ext}"
+
+        image_url = await upload_bytes(img_bytes, fname, ct)
+        if image_url:
+            data["image_url"] = image_url
+
+        # ── Formatear resultado ───────────────────────────────────────────
         response = format_exif_result(data)
+
+        # Logging DB
+        try:
+            log_query(update.effective_user.id, "menu_exif", fname[:100], success=True)
+        except Exception:
+            pass
+
         context.user_data["last_result"] = response
         context.user_data.pop("mode", None)
         await msg.edit_text(
             response, parse_mode="HTML",
             disable_web_page_preview=True,
-            reply_markup=back_btn(show_export=True),
+            reply_markup=back_btn(show_export=True)
         )
+
     except Exception as e:
-        await msg.edit_text(f"❌ Error procesando imagen: {e}", reply_markup=back_btn())
+        logger.error(f"[document_handler] {e}", exc_info=True)
+        try:
+            log_error("menu_exif", str(e))
+        except Exception:
+            pass
+        await msg.edit_text(
+            f"❌ Error procesando imagen: <code>{e}</code>",
+            parse_mode="HTML", reply_markup=back_btn()
+        )
+
+
+# ---- cancel_command --------------------------------------------------
+
+async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Cancela el modo activo y vuelve al menu principal."""
+    if not await check_access(update, context):
+        return
+    mode = context.user_data.pop("mode", None)
+    if mode:
+        await update.message.reply_text(
+            "❌ <b>Operacion cancelada.</b>\n\nUsa el menu para empezar de nuevo.",
+            parse_mode="HTML",
+            reply_markup=main_menu()
+        )
+    else:
+        await update.message.reply_text(
+            "ℹ️ No hay ninguna operacion activa.",
+            reply_markup=main_menu()
+        )
