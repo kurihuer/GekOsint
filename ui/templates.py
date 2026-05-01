@@ -1090,7 +1090,7 @@ def format_fb_osint(data: dict) -> str:
         )
     out.append("")
 
-    # ── Recovery hints (la joya) ─────────────────────────────────────────────
+    # ── Recovery hints ───────────────────────────────────────────────────────
     if rec.get("obfuscated_email") or rec.get("obfuscated_phone"):
         out.append("🎯 <b>Recovery hints</b>")
         if rec.get("obfuscated_email"):
@@ -1098,6 +1098,23 @@ def format_fb_osint(data: dict) -> str:
         if rec.get("obfuscated_phone"):
             out.append(f"   📱 Phone: <code>{rec['obfuscated_phone']}</code>")
         out.append("   <i>(Hints parciales del recovery de Facebook)</i>\n")
+    else:
+        # Meta migró el flujo de recovery a Bloks/CAA con payload encriptado
+        # (cliente: com.bloks.www.caa.ar.search). Los hints ya no están en
+        # el HTML — vienen por XHR async con `caa_core_data_encrypted`.
+        # No replicable sin browser real (Playwright/Selenium).
+        out.append("🎯 <b>Recovery hints:</b> ❌ no disponibles")
+        out.append(
+            "   <i>Meta migró el recovery a <b>Bloks/CAA</b> con payload "
+            "encriptado en 2024. Los hints ya no están en el HTML inicial — "
+            "se cargan por XHR async con cifrado de cliente que no se puede "
+            "replicar desde un bot.</i>"
+        )
+        out.append(
+            "   💡 <b>Alternativa:</b> probá <code>📷 IG OSINT</code> con el "
+            "username — IG aún devuelve hints vía Toutatis. Muchas cuentas "
+            "FB/IG están enlazadas y comparten el mismo email/teléfono.\n"
+        )
 
     # ── Foto de perfil ───────────────────────────────────────────────────────
     # Prioridad: URL real del CDN (scontent.fbcdn.net) que sale del recovery,

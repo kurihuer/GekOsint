@@ -119,12 +119,23 @@ def _fb_cookies() -> dict:
 
 async def get_fb_recovery_hints(query: str) -> dict:
     """
-    Usa el flujo público de "Forgot password" de FB para obtener hints
-    parcialmente ofuscados de email y teléfono asociados a la cuenta.
+    Intenta scrapear `display_name`, `profile_pic_url` (CDN real) y `user_id`
+    desde la página de recovery de FB.
 
-    Usa `m.facebook.com` (versión mobile) en vez de `www.facebook.com`
-    porque desde IPs de cloud (Koyeb/etc) el sitio principal devuelve
-    400/captcha por anti-bot, mientras que el mobile es mucho más laxo.
+    ⚠️ NOTA IMPORTANTE (mayo 2026):
+    Los `obfuscated_email` y `obfuscated_phone` ya **NO se pueden obtener**.
+    Meta migró todo el flujo de account recovery a **Bloks/CAA**
+    (`com.bloks.www.caa.ar.search`) en 2024. Los hints ahora vienen por una
+    llamada XHR a `/async/wbloks/fetch/` cuyo payload incluye un campo
+    `caa_core_data_encrypted` cifrado client-side. Sin un browser real
+    corriendo el JS de Meta no se puede generar ese cifrado.
+
+    Esta función mantiene el scraping del HTML inicial para extraer:
+      - `display_name` (cuando FB lo embebe)
+      - `profile_pic_url` (URL del CDN scontent.fbcdn.net)
+      - `user_id` (a veces embebido en hidden inputs)
+
+    Para hints de email/teléfono parcial, usar IG OSINT en su lugar.
     """
     out = {
         "found":            False,
@@ -646,7 +657,7 @@ async def fb_lookup(query: str) -> dict:
         elif resolved.get("error"):
             out["errors"].append(f"Resolve: {resolved['error']}")
 
-    # 2) Recovery hints — funciona con cualquier tipo de input
+    # 2) Recovery hints — best-effort scrape (sin email/phone, ver docstring)
     await asyncio.sleep(INTER_REQUEST_WAIT)
     recovery = await get_fb_recovery_hints(query)
     out["recovery"] = recovery
@@ -660,7 +671,7 @@ async def fb_lookup(query: str) -> dict:
     if recovery.get("error") and recovery["error"] not in (None, ""):
         out["errors"].append(f"Recovery: {recovery['error']}")
 
-    # 3) Generar URLs de foto de perfil si tenemos user_id
+    # 3) URLs de foto vía graph.facebook.com (fallback si no hay scontent)
     if out["user_id"]:
         out["profile_pic_urls"] = fb_profile_picture_urls(out["user_id"])
 
