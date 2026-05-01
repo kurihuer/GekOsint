@@ -344,11 +344,13 @@ async def get_fb_recovery_hints(query: str) -> dict:
                             logger.debug(f"FB recovery email match ({tag}): {val!r}")
                             return m
                 if candidates:
-                    logger.debug(
-                        f"FB recovery: {len(candidates)} emails candidatos "
-                        f"sin ofuscación, descartados. Primero: "
+                    logger.info(
+                        f"FB recovery extract_email: {len(candidates)} emails "
+                        f"candidatos SIN ofuscación, descartados. Primero: "
                         f"{candidates[0][1]!r}"
                     )
+                else:
+                    logger.info("FB recovery extract_email: 0 candidatos")
                 return None
 
             def _extract_phone(src):
@@ -368,12 +370,21 @@ async def get_fb_recovery_hints(query: str) -> dict:
                             logger.debug(f"FB recovery phone match ({tag}): {val!r}")
                             return m
                 if candidates:
-                    logger.debug(
-                        f"FB recovery: {len(candidates)} phones candidatos "
-                        f"sin ofuscación, descartados. Primero: "
+                    logger.info(
+                        f"FB recovery extract_phone: {len(candidates)} phones "
+                        f"candidatos SIN ofuscación, descartados. Primero: "
                         f"{candidates[0][1]!r}"
                     )
+                else:
+                    logger.info("FB recovery extract_phone: 0 candidatos")
                 return None
+
+            # Resumen del HTML antes de extraer
+            logger.info(
+                f"FB recovery HTML paso1: len={len(html)} "
+                f"has_at={'@' in html} has_obfusc={any(c in html for c in '*•·×')} "
+                f"url={r2.url!r}"
+            )
 
             em_m = _extract_email(html)
             ph_m = _extract_phone(html)

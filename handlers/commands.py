@@ -129,6 +129,7 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "• <code>/admin remove ID</code> — Eliminar usuario\n"
             "• <code>/admin stats</code>     — Ver estadísticas\n"
             "• <code>/admin proxy</code>     — Probar conectividad del PROXY_URL\n"
+            "• <code>/admin fbdebug</code>   — Bajar HTMLs guardados del último FB lookup\n"
         )
         await update.message.reply_text(msg, parse_mode="HTML")
         return
@@ -163,6 +164,36 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"👥 Usuarios autorizados: {len(get_all_users())}\n",
             parse_mode="HTML"
         )
+    elif cmd == "fbdebug":
+        # /admin fbdebug → manda los HTMLs de FB recovery guardados
+        from io import BytesIO
+        import os as _os
+        from config import PAGES_DIR
+        sent = 0
+        for fname in ("fb_debug_paso1.html", "fb_debug_paso2.html",
+                      "fb_debug_step3.html"):
+            path = _os.path.join(PAGES_DIR, fname)
+            if _os.path.isfile(path):
+                try:
+                    with open(path, "rb") as f:
+                        bio = BytesIO(f.read())
+                        bio.name = fname
+                    await context.bot.send_document(
+                        chat_id=update.effective_chat.id,
+                        document=bio,
+                        caption=f"FB debug: {fname}",
+                    )
+                    sent += 1
+                except Exception as e:
+                    await update.message.reply_text(
+                        f"❌ Error mandando {fname}: {e}"
+                    )
+        if sent == 0:
+            await update.message.reply_text(
+                "❌ No hay HTMLs de debug guardados. Hacé un FB OSINT primero."
+            )
+        else:
+            await update.message.reply_text(f"✅ {sent} archivo(s) enviados.")
     elif cmd == "proxy":
         # /admin proxy → testea que el PROXY_URL funcione
         import httpx
