@@ -389,6 +389,20 @@ async def get_fb_recovery_hints(query: str) -> dict:
             em_m = _extract_email(html)
             ph_m = _extract_phone(html)
 
+            # ── Guardar SIEMPRE el HTML del paso 1 para debug ────────────────
+            try:
+                from config import PAGES_DIR
+                _dbg1 = os.path.join(PAGES_DIR, "fb_debug_paso1.html")
+                with open(_dbg1, "w", encoding="utf-8") as _f:
+                    _f.write(
+                        f"<!-- Query: {query} | URL final: {r2.url} | "
+                        f"Status: {r2.status_code} | len: {len(html)} -->\n"
+                    )
+                    _f.write(html)
+                logger.info(f"FB recovery: HTML paso1 guardado ({len(html)} bytes)")
+            except Exception as _e:
+                logger.warning(f"FB recovery: no se pudo guardar fb_debug_paso1.html: {_e}")
+
             page_found = (
                 any(kw in html_lower for kw in all_indicators)
                 or "recover_account" in r2.url.path
