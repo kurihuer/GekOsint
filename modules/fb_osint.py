@@ -136,31 +136,71 @@ async def get_fb_recovery_hints(query: str) -> dict:
         "error":            None,
     }
 
-    # Headers ultra-minimalistas — cuanto más simulamos un Nokia viejo
-    # accediendo a mbasic, menos anti-bot triggea Meta.
     minimal_headers = {
-        "User-Agent":      "Mozilla/5.0 (Linux; U; Android 9; en-US) AppleWebKit/534.30 (KHTML, like Gecko) Version/4.0 Mobile Safari/534.30",
+        "User-Agent":      "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
         "Accept":          "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.9",
     }
 
-    # Probar mbasic primero (el más laxo), después m.facebook.com como fallback
+    # Recovery usa solo datr (cookie de navegador, no de sesión).
+    # Con c_user+xs activos FB manda checkpoint por "otra cuenta".
+    _anon_cookies = {k: v for k, v in _fb_cookies().items() if k == "datr" and v}
+    _proxy = {"proxy": PROXY_URL} if PROXY_URL else {}
+    if PROXY_URL:
+        # Mostrar solo host:port del proxy en logs (sin user:pass) para diagnóstico
+        try:
+            from urllib.parse import urlparse
+            _pu = urlparse(PROXY_URL)
+            logger.info(f"FB recovery: usando proxy {_pu.scheme}://{_pu.hostname}:{_pu.port}")
+        except Exception:
+            logger.info("FB recovery: proxy configurado")
+    else:
+        logger.info("FB recovery: SIN proxy (alta probabilidad de 400 desde cloud IP)")
+
+    # Probar mbasic primero, luego m., luego www. (residencial)
     base_urls = [
         "https://mbasic.facebook.com/login/identify/",
         "https://m.facebook.com/login/identify/",
+        "https://www.facebook.com/login/identify/",
     ]
 
-    _proxy = {"proxy": PROXY_URL} if PROXY_URL else {}
     try:
         async with httpx.AsyncClient(
             timeout=20.0, follow_redirects=True,
-            cookies=_fb_cookies(),
+            cookies=_anon_cookies,
             **_proxy,
         ) as client:
             html = None
             base_url = None
 
+            # ── Prefetch CSRF desde mbasic login.php ─────────────────────────
+            # La identify page es JS-rendered en 2026; login.php aún tiene HTML.
+            mbasic_lsd = None
+            mbasic_jazoest = None
+            try:
+                r_pre = await client.get(
+                    "https://mbasic.facebook.com/login.php",
+                    headers=minimal_headers,
+                )
+                if r_pre.status_code == 200:
+                    lm = re.search(r'name="lsd"\s+value="([^"]+)"',     r_pre.text)
+                    jm = re.search(r'name="jazoest"\s+value="([^"]+)"', r_pre.text)
+                    mbasic_lsd     = lm.group(1) if lm else None
+                    mbasic_jazoest = jm.group(1) if jm else None
+                    logger.debug(
+                        f"FB mbasic login.php CSRF prefetch: "
+                        f"lsd={bool(mbasic_lsd)} jazoest={bool(mbasic_jazoest)}"
+                    )
+            except Exception as e:
+                logger.debug(f"FB mbasic login.php prefetch error: {e}")
+            await asyncio.sleep(0.8)
+
             for url in base_urls:
+                domain = url.split("/")[2]
+                # Tokens prefetched son válidos solo para el mismo subdominio
+                prefetch_lsd     = mbasic_lsd     if domain == "mbasic.facebook.com" else None
+                prefetch_jazoest = mbasic_jazoest if domain == "mbasic.facebook.com" else None
+
                 # 1) GET inicial
                 try:
                     r1 = await client.get(
@@ -172,25 +212,42 @@ async def get_fb_recovery_hints(query: str) -> dict:
                     logger.debug(f"FB GET {url} excepción: {e}")
                     continue
 
+                logger.debug(f"FB GET {url} → HTTP {r1.status_code} final_url={r1.url}")
                 if r1.status_code != 200:
-                    logger.debug(f"FB GET {url} → HTTP {r1.status_code}")
                     continue
 
                 # Pausa "humana" entre el GET y el POST
                 await asyncio.sleep(1.5)
 
-                # Extraer tokens CSRF
-                lsd_m     = re.search(r'name="lsd"\s+value="([^"]+)"',     r1.text)
+                # Extraer tokens CSRF del identify page (o desde JS embebido)
+                lsd_m     = (
+                    re.search(r'name="lsd"\s+value="([^"]+)"',     r1.text) or
+                    re.search(r'"LSD"[^}]*?"token":"([^"]+)"',     r1.text) or
+                    re.search(r'\["LSD","([^"]+)"\]',              r1.text)
+                )
                 jazoest_m = re.search(r'name="jazoest"\s+value="([^"]+)"', r1.text)
                 fb_dtsg_m = re.search(r'name="fb_dtsg"\s+value="([^"]+)"', r1.text)
 
+                # Fallback: usar tokens del prefetch si la identify page es JS-rendered
+                lsd_val     = (lsd_m.group(1)     if lsd_m     else None) or prefetch_lsd
+                jazoest_val = (jazoest_m.group(1) if jazoest_m else None) or prefetch_jazoest
+
+                logger.debug(
+                    f"FB CSRF — identify page: lsd={bool(lsd_m)} jazoest={bool(jazoest_m)} | "
+                    f"prefetch: lsd={bool(prefetch_lsd)} | final lsd={bool(lsd_val)}"
+                )
+
+                if not lsd_val:
+                    logger.debug(f"FB: sin CSRF tokens para {domain}, probando siguiente URL")
+                    continue
+
                 data = {"email": query}
-                if lsd_m:     data["lsd"]     = lsd_m.group(1)
-                if jazoest_m: data["jazoest"] = jazoest_m.group(1)
-                if fb_dtsg_m: data["fb_dtsg"] = fb_dtsg_m.group(1)
+                data["lsd"] = lsd_val
+                if jazoest_val: data["jazoest"] = jazoest_val
+                if fb_dtsg_m:   data["fb_dtsg"] = fb_dtsg_m.group(1)
 
                 # 2) POST al mismo dominio
-                origin = "https://" + url.split("/")[2]
+                origin = "https://" + domain
                 r2 = await client.post(
                     url + "?ctx=recover",
                     data=data,
@@ -202,13 +259,14 @@ async def get_fb_recovery_hints(query: str) -> dict:
                     },
                 )
 
+                logger.debug(f"FB POST {url} → HTTP {r2.status_code} final_url={r2.url}")
+
                 if r2.status_code in (401, 429):
                     out["error"] = f"FB rate limit ({r2.status_code})"
                     trigger_fb_pause(f"identify {r2.status_code}")
                     return out
 
                 if r2.status_code == 400:
-                    logger.debug(f"FB POST {url} → 400 (anti-bot agresivo aquí)")
                     continue
 
                 if r2.status_code == 200:
@@ -220,9 +278,9 @@ async def get_fb_recovery_hints(query: str) -> dict:
 
             if not html:
                 out["error"] = (
-                    "FB recovery bloqueado desde IP de cloud. "
-                    "Las cookies funcionan pero el endpoint de recovery está "
-                    "más restringido. Probá desde una IP residencial o proxy."
+                    "FB recovery bloqueado. Posibles causas: IP bloqueada, "
+                    "no se obtuvieron tokens CSRF, o cuenta no encontrada. "
+                    "Intentá desde IP residencial o configurá PROXY_URL."
                 )
                 return out
 
@@ -259,9 +317,29 @@ async def get_fb_recovery_hints(query: str) -> dict:
             ]
             all_indicators = step1_indicators + step2_indicators
 
-            # Extraer patrones de hints directamente (independiente de keywords)
-            em_m = re.search(r'>([a-zA-Z0-9][\w.*•]*@[\w.*•]+\.[a-z]{2,})<', html)
-            ph_m = re.search(r'>(\+?[0-9\s•·\*]{4,}\d{2})<', html)
+            # Extraer patrones — los hints reales SIEMPRE tienen • o * (ofuscación)
+            def _extract_email(src):
+                for pat in [
+                    r'>([a-zA-Z0-9][\w.*•]*@[\w.*•]+\.[a-z]{2,})<',
+                    r'"([a-zA-Z0-9][\w.*•]*@[\w.*•]+\.[a-z]{2,})"',
+                ]:
+                    m = re.search(pat, src)
+                    if m and any(c in m.group(1) for c in ('*', '•')):
+                        return m
+                return None
+
+            def _extract_phone(src):
+                for pat in [
+                    r'>(\+?[0-9\s•·\*]{4,20})<',
+                    r'"(\+?[0-9][0-9\s•·\*]{4,18})"',
+                ]:
+                    m = re.search(pat, src)
+                    if m and any(c in m.group(1) for c in ('•', '·', '*')):
+                        return m
+                return None
+
+            em_m = _extract_email(html)
+            ph_m = _extract_phone(html)
 
             page_found = (
                 any(kw in html_lower for kw in all_indicators)
@@ -286,10 +364,31 @@ async def get_fb_recovery_hints(query: str) -> dict:
                 if pic_m:
                     out["profile_pic_url"] = pic_m.group(1).replace("&amp;", "&")
 
-                # User ID
-                uid_m = re.search(r'(?:c\[0\]|"u":")(\d{8,17})', html)
+                # Log para debug — ver qué devuelve FB
+                logger.debug(f"FB recovery HTML paso1 (1500c): {html[:1500]}")
+
+                # User ID — FB a veces HTML-encodea los corchetes
+                uid_m = (
+                    re.search(r'name="c\[0\]"[^>]*value="(\d{8,17})"', html) or
+                    re.search(r'value="(\d{8,17})"[^>]*name="c\[0\]"', html) or
+                    re.search(r'name="c(?:&#x5B;|%5B)0(?:&#x5D;|%5D)"[^>]*value="(\d{8,17})"', html) or
+                    re.search(r'"u":"(\d{8,17})"', html) or
+                    re.search(r'c\[0\]=(\d{8,17})', html) or
+                    re.search(r'profile\.php\?id=(\d{8,17})', html) or
+                    re.search(r'/(\d{8,17})/picture', html)
+                )
                 if uid_m:
                     out["user_id"] = uid_m.group(1)
+
+                # Acción del formulario del paso 2
+                form_action_m = re.search(r'<form[^>]+action="([^"]+)"', html)
+                step2_url = (
+                    form_action_m.group(1).replace("&amp;", "&")
+                    if form_action_m else base_url + "?ctx=recover"
+                )
+                # Si la acción es relativa, completar con dominio base
+                if step2_url.startswith("/"):
+                    step2_url = "https://" + base_url.split("/")[2] + step2_url
 
                 # Si ya tenemos hints en la primera respuesta, listo
                 if em_m:
@@ -301,50 +400,51 @@ async def get_fb_recovery_hints(query: str) -> dict:
                 # y llegar a la página de opciones de recovery (donde aparecen los hints)
                 if not out["obfuscated_email"] and not out["obfuscated_phone"]:
                     uid_val = out.get("user_id")
-                    on_step1 = any(kw in html_lower for kw in step1_indicators)
+                    await asyncio.sleep(1.0)
 
-                    if uid_val or on_step1:
-                        await asyncio.sleep(1.0)
+                    # Tokens CSRF del HTML de paso 1 (o prefetch como fallback)
+                    lsd_m2     = re.search(r'name="lsd"\s+value="([^"]+)"',     html)
+                    jazoest_m2 = re.search(r'name="jazoest"\s+value="([^"]+)"', html)
+                    fb_dtsg_m2 = re.search(r'name="fb_dtsg"\s+value="([^"]+)"', html)
+                    lsd_val2     = (lsd_m2.group(1)     if lsd_m2     else None) or lsd_val
+                    jazoest_val2 = (jazoest_m2.group(1) if jazoest_m2 else None) or jazoest_val
 
-                        # Reusar tokens CSRF de la primera respuesta
-                        lsd_m2     = re.search(r'name="lsd"\s+value="([^"]+)"',     html)
-                        jazoest_m2 = re.search(r'name="jazoest"\s+value="([^"]+)"', html)
-                        fb_dtsg_m2 = re.search(r'name="fb_dtsg"\s+value="([^"]+)"', html)
+                    data2 = {"did_submit": "1"}
+                    if uid_val:
+                        data2["c[0]"] = uid_val
+                    if lsd_val2:     data2["lsd"]     = lsd_val2
+                    if jazoest_val2: data2["jazoest"] = jazoest_val2
+                    if fb_dtsg_m2:   data2["fb_dtsg"] = fb_dtsg_m2.group(1)
 
-                        data2 = {"did_submit": "1"}
-                        if uid_val:
-                            data2["c[0]"] = uid_val
-                        if lsd_m2:     data2["lsd"]     = lsd_m2.group(1)
-                        if jazoest_m2: data2["jazoest"] = jazoest_m2.group(1)
-                        if fb_dtsg_m2: data2["fb_dtsg"] = fb_dtsg_m2.group(1)
-
-                        try:
-                            r3 = await client.post(
-                                base_url + "?ctx=recover",
-                                data=data2,
-                                headers={
-                                    **minimal_headers,
-                                    "Content-Type": "application/x-www-form-urlencoded",
-                                    "Origin":       "https://" + base_url.split("/")[2],
-                                    "Referer":      base_url + "?ctx=recover",
-                                },
+                    try:
+                        r3 = await client.post(
+                            step2_url,
+                            data=data2,
+                            headers={
+                                **minimal_headers,
+                                "Content-Type": "application/x-www-form-urlencoded",
+                                "Origin":       "https://" + base_url.split("/")[2],
+                                "Referer":      base_url + "?ctx=recover",
+                            },
+                        )
+                        logger.debug(f"FB paso2 status: {r3.status_code} url: {r3.url}")
+                        if r3.status_code == 200:
+                            html2 = r3.text or ""
+                            _dbg = os.path.join(
+                                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                "fb_debug_paso2.html"
                             )
-                            if r3.status_code == 200:
-                                html2 = r3.text or ""
-                                em_m2 = re.search(
-                                    r'>([a-zA-Z0-9][\w.*•]*@[\w.*•]+\.[a-z]{2,})<',
-                                    html2
-                                )
-                                ph_m2 = re.search(
-                                    r'>(\+?[0-9\s•·\*]{4,}\d{2})<',
-                                    html2
-                                )
-                                if em_m2:
-                                    out["obfuscated_email"] = em_m2.group(1).strip()
-                                if ph_m2:
-                                    out["obfuscated_phone"] = ph_m2.group(1).strip()
-                        except Exception as e2:
-                            logger.debug(f"FB recovery paso 2: {e2}")
+                            with open(_dbg, "w", encoding="utf-8") as _f:
+                                _f.write(html2)
+                            logger.debug(f"FB paso2 HTML guardado en {_dbg}")
+                            em_m2 = _extract_email(html2)
+                            ph_m2 = _extract_phone(html2)
+                            if em_m2:
+                                out["obfuscated_email"] = em_m2.group(1).strip()
+                            if ph_m2:
+                                out["obfuscated_phone"] = ph_m2.group(1).strip()
+                    except Exception as e2:
+                        logger.debug(f"FB recovery paso 2 excepción: {e2}")
             else:
                 logger.debug(f"FB recovery HTML snippet: {html[:500]}")
                 out["error"] = "FB no encontró cuenta o respuesta no parseable"

@@ -128,6 +128,7 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "• <code>/admin add ID</code>    — Añadir usuario\n"
             "• <code>/admin remove ID</code> — Eliminar usuario\n"
             "• <code>/admin stats</code>     — Ver estadísticas\n"
+            "• <code>/admin proxy</code>     — Probar conectividad del PROXY_URL\n"
         )
         await update.message.reply_text(msg, parse_mode="HTML")
         return
@@ -162,6 +163,68 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"👥 Usuarios autorizados: {len(get_all_users())}\n",
             parse_mode="HTML"
         )
+    elif cmd == "proxy":
+        # /admin proxy → testea que el PROXY_URL funcione
+        import httpx
+        from config import PROXY_URL
+        if not PROXY_URL:
+            await update.message.reply_text(
+                "❌ <b>PROXY_URL no configurado</b>\n\n"
+                "Setealo en Koyeb env vars con formato:\n"
+                "<code>http://user:pass@host:port</code>\n"
+                "<code>socks5://user:pass@host:port</code>",
+                parse_mode="HTML",
+            )
+            return
+        try:
+            from urllib.parse import urlparse
+            pu = urlparse(PROXY_URL)
+            display = f"{pu.scheme}://{pu.hostname}:{pu.port}"
+        except Exception:
+            display = "(no parseable)"
+        await update.message.reply_text(
+            f"🔍 <b>Probando proxy...</b>\n<code>{display}</code>",
+            parse_mode="HTML",
+        )
+        try:
+            async with httpx.AsyncClient(
+                proxy=PROXY_URL, timeout=15.0,
+            ) as client:
+                # Test 1: ¿qué IP ven los servicios desde el proxy?
+                r = await client.get("https://api.ipify.org?format=json")
+                ip_via_proxy = r.json().get("ip", "?") if r.status_code == 200 else f"HTTP {r.status_code}"
+
+                # Test 2: ¿FB nos responde 200 desde el proxy?
+                fb_test = "?"
+                try:
+                    r2 = await client.get(
+                        "https://m.facebook.com/login/identify/?ctx=recover",
+                        headers={"User-Agent": "Mozilla/5.0 (iPhone) Safari/604.1"},
+                        follow_redirects=True,
+                    )
+                    fb_test = f"HTTP {r2.status_code}"
+                except Exception as e:
+                    fb_test = f"❌ {type(e).__name__}: {str(e)[:60]}"
+
+            await update.message.reply_text(
+                f"✅ <b>Proxy funciona</b>\n\n"
+                f"🌐 IP saliente: <code>{ip_via_proxy}</code>\n"
+                f"📘 FB recovery responde: <code>{fb_test}</code>\n\n"
+                f"<i>Si IP saliente es la del proxy y FB devuelve 200, "
+                f"el módulo FB OSINT debería funcionar.</i>",
+                parse_mode="HTML",
+            )
+        except Exception as e:
+            await update.message.reply_text(
+                f"❌ <b>Proxy NO funciona</b>\n\n"
+                f"Error: <code>{type(e).__name__}: {str(e)[:200]}</code>\n\n"
+                f"<i>Causas comunes:\n"
+                f"• El host:port del proxy no es accesible desde Koyeb\n"
+                f"• Si es tu PC: necesitás exponerla con ngrok/Cloudflare Tunnel\n"
+                f"• Credenciales incorrectas\n"
+                f"• Proxy SOCKS5 sin <code>httpx[socks]</code></i>",
+                parse_mode="HTML",
+            )
 
 
 # ── /start y /help ────────────────────────────────────────────────────────────
