@@ -195,7 +195,17 @@ async def _rapidapi_lookup(username: str, client: httpx.AsyncClient) -> dict | N
 
     # (url, host, parser_fn)
     endpoints = [
-        # 1) TiKWM — tiktok-scraper7 (score 10, 888ms) — el que estaba antes
+        # 1) TikWM API — tikwm.p.rapidapi.com (el que el usuario suscribio)
+        (
+            "https://tikwm.p.rapidapi.com/user/info",
+            "tikwm.p.rapidapi.com",
+            {"params": {"unique_id": username}},
+            lambda d: (
+                (d.get("data") or {}).get("user", {}),
+                (d.get("data") or {}).get("stats", {}),
+            ),
+        ),
+        # 2) TiKWM scraper7 — tiktok-scraper7 (alternativa del mismo proveedor)
         (
             "https://tiktok-scraper7.p.rapidapi.com/user/info",
             "tiktok-scraper7.p.rapidapi.com",
@@ -205,7 +215,7 @@ async def _rapidapi_lookup(username: str, client: httpx.AsyncClient) -> dict | N
                 (d.get("data") or {}).get("stats", {}),
             ),
         ),
-        # 2) ScrapTik — scraptik (score 9.9, 1150ms)
+        # 3) ScrapTik — scraptik (fallback)
         (
             "https://scraptik.p.rapidapi.com/get-user",
             "scraptik.p.rapidapi.com",
@@ -213,16 +223,6 @@ async def _rapidapi_lookup(username: str, client: httpx.AsyncClient) -> dict | N
             lambda d: (
                 d.get("user_info", {}).get("user", {}),
                 d.get("user_info", {}).get("stats", {}),
-            ),
-        ),
-        # 3) TokApi mobile — somjik (score 9.9, 1638ms)
-        (
-            "https://tokapi-mobile-version.p.rapidapi.com/v1/user",
-            "tokapi-mobile-version.p.rapidapi.com",
-            {"params": {"username": username, "region": "US"}},
-            lambda d: (
-                (d.get("user_info") or {}).get("user", {}),
-                (d.get("user_info") or {}).get("stats", {}),
             ),
         ),
     ]
