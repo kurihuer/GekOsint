@@ -282,16 +282,33 @@ async def tiktok_lookup(raw_input: str) -> dict:
         raw = await _scrape_web(username, client)
 
         # Si el scraping falló o devolvió bot-check, intentar RapidAPI
+        rapidapi_tried = False
         if raw is None or raw.get("_bot_check"):
+            rapidapi_tried = True
             raw = await _rapidapi_lookup(username, client)
 
         if raw is None:
-            return {
-                "error": (
+            has_key = bool(RAPIDAPI_KEY)
+            if has_key and rapidapi_tried:
+                diag = (
+                    "TikTok y RapidAPI fallaron desde esta IP.\n"
+                    "Posibles causas:\n"
+                    "- No suscripto al plan de TiKWM/ScrapTik en RapidAPI\n"
+                    "- Key incorrecta o expirada\n\n"
+                    f"Ver perfil: https://www.tiktok.com/@{username}"
+                )
+            elif not has_key:
+                diag = (
+                    "TikTok bloquea IPs de servidor. Configura RAPIDAPI_KEY\n\n"
+                    f"Ver perfil: https://www.tiktok.com/@{username}"
+                )
+            else:
+                diag = (
                     "TikTok bloquea IPs de servidor cloud.\n\n"
-                    "Consulta el perfil directamente:\n"
-                    f"https://www.tiktok.com/@{username}"
-                ),
+                    f"Ver perfil: https://www.tiktok.com/@{username}"
+                )
+            return {
+                "error": diag,
                 "username": username,
                 "_blocked": True,
             }
