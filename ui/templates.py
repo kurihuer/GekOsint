@@ -1209,11 +1209,22 @@ def format_email_recon(data: dict) -> str:
 def format_tiktok_osint(data: dict) -> str:
     if data.get("error"):
         username = data.get("username", "")
+        url = f"https://www.tiktok.com/@{username}"
+        blocked = data.get("_blocked", False)
+        if blocked:
+            return (
+                f"{render_header('TIKTOK OSINT')}"
+                f"<b>@{username}</b>\n\n"
+                f"<b>Ver perfil directamente:</b>\n"
+                f"<a href='{url}'>{url}</a>\n\n"
+                f"<i>TikTok bloquea consultas desde IPs de servidor.</i>\n"
+                f"<i>Abre el link para ver el perfil completo.</i>"
+            )
         return (
-            "<b>TikTok OSINT - Error</b>\n\n"
+            "<b>TikTok OSINT</b>\n\n"
             + str(data["error"])
             + "\n\n"
-            + f"Ver perfil: https://www.tiktok.com/@{username}"
+            + f"<a href='{url}'>Ver perfil en TikTok</a>"
         )
 
     out = []

@@ -247,7 +247,15 @@ async def tiktok_lookup(raw_input: str) -> dict:
             raw = await _rapidapi_lookup(username, client)
 
         if raw is None:
-            return {"error": "No se pudo conectar con TikTok.", "username": username}
+            return {
+                "error": (
+                    "TikTok bloquea IPs de servidor cloud.\n\n"
+                    "Consulta el perfil directamente:\n"
+                    f"https://www.tiktok.com/@{username}"
+                ),
+                "username": username,
+                "_blocked": True,
+            }
 
         if raw.get("_not_found"):
             return {"error": "Usuario no encontrado en TikTok.", "username": username}

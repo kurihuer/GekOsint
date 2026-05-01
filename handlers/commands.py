@@ -696,9 +696,12 @@ async def document_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ct       = ct_map.get(ext, "image/jpeg")
         fname    = f"gekosint_exif_{update.effective_user.id}.{ext}"
 
-        image_url = await upload_bytes(img_bytes, fname, ct)
-        if image_url:
-            data["image_url"] = image_url
+        try:
+            image_url = await upload_bytes(img_bytes, fname, ct)
+            if image_url:
+                data["image_url"] = image_url
+        except Exception as _ue:
+            logger.debug(f"[exif] upload fallido: {_ue}")
 
         # ── Formatear resultado ───────────────────────────────────────────
         response = format_exif_result(data)
