@@ -186,65 +186,64 @@ async def _scrape_web(username: str, client: httpx.AsyncClient) -> dict | None:
 
 async def _rapidapi_lookup(username: str, client: httpx.AsyncClient) -> dict | None:
     """
-    Intenta los 3 mejores endpoints de TikTok en RapidAPI en orden.
-    Todos usan la misma RAPIDAPI_KEY — solo cambia el host.
-    Orden: TiKWM (tiktok-scraper7) → ScrapTik → TokApi
+    Usa la TikWM API de RapidAPI (tikwm.p.rapidapi.com).
+    La respuesta es plana: data.fans_count, data.video_count, etc.
     """
     if not RAPIDAPI_KEY:
         return None
 
-    # (url, host, parser_fn)
-    endpoints = [
-        # 1) TikWM API — tikwm.p.rapidapi.com (el que el usuario suscribio)
-        (
+    try:
+        r = await client.get(
             "https://tikwm.p.rapidapi.com/user/info",
-            "tikwm.p.rapidapi.com",
-            {"params": {"unique_id": username}},
-            lambda d: (
-                (d.get("data") or {}).get("user", {}),
-                (d.get("data") or {}).get("stats", {}),
-            ),
-        ),
-        # 2) TiKWM scraper7 — tiktok-scraper7 (alternativa del mismo proveedor)
-        (
-            "https://tiktok-scraper7.p.rapidapi.com/user/info",
-            "tiktok-scraper7.p.rapidapi.com",
-            {"params": {"unique_id": username}},
-            lambda d: (
-                (d.get("data") or {}).get("user", {}),
-                (d.get("data") or {}).get("stats", {}),
-            ),
-        ),
-        # 3) ScrapTik — scraptik (fallback)
-        (
-            "https://scraptik.p.rapidapi.com/get-user",
-            "scraptik.p.rapidapi.com",
-            {"params": {"username": username}},
-            lambda d: (
-                d.get("user_info", {}).get("user", {}),
-                d.get("user_info", {}).get("stats", {}),
-            ),
-        ),
-    ]
+            params={"unique_id": username},
+            headers={
+                "X-RapidAPI-Key":  RAPIDAPI_KEY,
+                "X-RapidAPI-Host": "tikwm.p.rapidapi.com",
+            },
+            timeout=15.0,
+        )
+        if r.status_code != 200:
+            logger.debug(f"TikWM API HTTP {r.status_code}")
+            return None
 
-    for url, host, req_kwargs, parser in endpoints:
-        try:
-            r = await client.get(
-                url,
-                headers={"X-RapidAPI-Key": RAPIDAPI_KEY, "X-RapidAPI-Host": host},
-                timeout=15.0,
-                **req_kwargs,
-            )
-            if r.status_code == 200:
-                d     = r.json()
-                user, stats = parser(d)
-                if user and user.get("id"):
-                    logger.debug(f"TikTok RapidAPI OK via {host}")
-                    return {"user": user, "stats": stats, "_source": f"rapidapi:{host}"}
-            logger.debug(f"TikTok RapidAPI {host}: HTTP {r.status_code}")
-        except Exception as e:
-            logger.debug(f"TikTok RapidAPI {host} error: {e}")
+        d    = r.json()
+        code = d.get("code", -1)
+        data = d.get("data") or {}
 
+        if code != 0 or not data:
+            logger.debug(f"TikWM API code={code} data={bool(data)}")
+            return None
+
+        uid = data.get("user_id") or data.get("id") or ""
+        if not uid:
+            logger.debug("TikWM API: sin user_id en respuesta")
+            return None
+
+        # Normalizar al formato que usa tiktok_lookup
+        user = {
+            "id":              uid,
+            "uniqueId":        data.get("unique_id", username),
+            "nickname":        data.get("nickname", username),
+            "signature":       data.get("signature", ""),
+            "verified":        bool(data.get("is_verified", False)),
+            "privateAccount":  bool(data.get("is_private", False)),
+            "region":          data.get("region", ""),
+            "createTime":      data.get("create_time", 0),
+            "avatarLarger":    data.get("avatar", ""),
+            "bioLink":         {"link": data.get("bio_link", "")},
+        }
+        stats = {
+            "followerCount":  data.get("fans_count",      0),
+            "followingCount": data.get("following_count", 0),
+            "heartCount":     data.get("heart",           0),
+            "videoCount":     data.get("video_count",     0),
+            "diggCount":      data.get("digg_count",      0),
+        }
+        logger.debug(f"TikWM API OK: @{username}, fans={stats['followerCount']}")
+        return {"user": user, "stats": stats, "_source": "tikwm_rapidapi"}
+
+    except Exception as e:
+        logger.debug(f"TikWM API error: {e}")
     return None
 
 

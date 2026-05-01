@@ -1212,13 +1212,13 @@ def format_tiktok_osint(data: dict) -> str:
         url = f"https://www.tiktok.com/@{username}"
         blocked = data.get("_blocked", False)
         if blocked:
+            diag = str(data.get("error", ""))
             return (
                 f"{render_header('TIKTOK OSINT')}"
                 f"<b>@{username}</b>\n\n"
                 f"<b>Ver perfil directamente:</b>\n"
                 f"<a href='{url}'>{url}</a>\n\n"
-                f"<i>TikTok bloquea consultas desde IPs de servidor.</i>\n"
-                f"<i>Abre el link para ver el perfil completo.</i>"
+                f"<i>{diag}</i>"
             )
         return (
             "<b>TikTok OSINT</b>\n\n"
