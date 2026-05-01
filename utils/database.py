@@ -13,7 +13,21 @@ from config import BASE_DIR
 
 logger = logging.getLogger("GekOsint.DB")
 
-DB_PATH = os.path.join(BASE_DIR, "gekosint.db")
+# En cloud (Koyeb/Railway/Render) /app es read-only → usar /tmp
+# En local BASE_DIR es escribible → usar ahi
+def _resolve_db_path() -> str:
+    candidate = os.path.join(BASE_DIR, "gekosint.db")
+    try:
+        # Verificar si podemos escribir en BASE_DIR
+        test = candidate + ".test"
+        with open(test, "w") as _f:
+            _f.write("x")
+        os.remove(test)
+        return candidate
+    except OSError:
+        return "/tmp/gekosint.db"
+
+DB_PATH = _resolve_db_path()
 
 # Mapeo bonito para nombres de módulos en reportes
 MODULE_LABELS = {
