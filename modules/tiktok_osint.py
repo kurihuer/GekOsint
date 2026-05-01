@@ -192,32 +192,54 @@ async def _rapidapi_lookup(username: str, client: httpx.AsyncClient) -> dict | N
     if not RAPIDAPI_KEY:
         return None
 
-    try:
-        r = await client.get(
-            "https://tikwm.p.rapidapi.com/user/info",
-            params={"unique_id": username},
-            headers={
-                "X-RapidAPI-Key":  RAPIDAPI_KEY,
-                "X-RapidAPI-Host": "tikwm.p.rapidapi.com",
-            },
-            timeout=15.0,
-        )
-        if r.status_code != 200:
-            logger.debug(f"TikWM API HTTP {r.status_code}")
-            return None
+    # Probar variantes de host/endpoint de TikWM en RapidAPI
+    variants = [
+        ("https://tikwm.p.rapidapi.com/user/info",        "tikwm.p.rapidapi.com",        {"unique_id": username}),
+        ("https://tikwm.p.rapidapi.com/api/user/info",    "tikwm.p.rapidapi.com",        {"unique_id": username}),
+        ("https://tiktok-scraper6.p.rapidapi.com/user/info", "tiktok-scraper6.p.rapidapi.com", {"unique_id": username}),
+        ("https://tiktok-scraper7.p.rapidapi.com/user/info", "tiktok-scraper7.p.rapidapi.com", {"unique_id": username}),
+    ]
 
-        d    = r.json()
+    last_status = None
+    for endpoint_url, host, params in variants:
+        try:
+            r = await client.get(
+                endpoint_url,
+                params=params,
+                headers={
+                    "X-RapidAPI-Key":  RAPIDAPI_KEY,
+                    "X-RapidAPI-Host": host,
+                },
+                timeout=15.0,
+            )
+            last_status = r.status_code
+            if r.status_code == 200:
+                pass  # continua abajo
+            elif r.status_code == 403:
+                logger.debug(f"TikWM {host}: 403 (no suscripto a este host)")
+                continue
+            else:
+                logger.debug(f"TikWM {host}: HTTP {r.status_code}")
+                continue
+        except Exception as _e:
+            logger.debug(f"TikWM {host}: {_e}")
+            continue
+
+        try:
+            d    = r.json()
+        except Exception:
+            continue
         code = d.get("code", -1)
         data = d.get("data") or {}
 
         if code != 0 or not data:
-            logger.debug(f"TikWM API code={code} data={bool(data)}")
-            return None
+            logger.debug(f"TikWM {host} code={code} data={bool(data)}")
+            continue
 
         uid = data.get("user_id") or data.get("id") or ""
         if not uid:
-            logger.debug("TikWM API: sin user_id en respuesta")
-            return None
+            logger.debug(f"TikWM {host}: sin user_id, keys={list(data.keys())[:8]}")
+            continue
 
         # Normalizar al formato que usa tiktok_lookup
         user = {
@@ -239,11 +261,9 @@ async def _rapidapi_lookup(username: str, client: httpx.AsyncClient) -> dict | N
             "videoCount":     data.get("video_count",     0),
             "diggCount":      data.get("digg_count",      0),
         }
-        logger.debug(f"TikWM API OK: @{username}, fans={stats['followerCount']}")
-        return {"user": user, "stats": stats, "_source": "tikwm_rapidapi"}
+        logger.debug(f"TikWM OK via {host}: @{username}, fans={stats['followerCount']}")
+        return {"user": user, "stats": stats, "_source": f"tikwm:{host}"}
 
-    except Exception as e:
-        logger.debug(f"TikWM API error: {e}")
     return None
 
 
