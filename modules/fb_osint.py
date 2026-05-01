@@ -317,25 +317,62 @@ async def get_fb_recovery_hints(query: str) -> dict:
             ]
             all_indicators = step1_indicators + step2_indicators
 
-            # Extraer patrones — los hints reales SIEMPRE tienen • o * (ofuscación)
+            # Caracteres de ofuscación que FB usa en distintas versiones del HTML.
+            # En 2026 vimos: *, •, ·, ×, x (ASCII), _, −, –, U+2022, espacios entre dígitos.
+            OBFUSC_CHARS = ('*', '•', '·', '×', '_', '−', '–', '─')
+            # Char-class regex con todos los chars de ofuscación + dígitos/letras
+            OBFUSC_CC = r"\*•·×_−–─x"
+
             def _extract_email(src):
-                for pat in [
-                    r'>([a-zA-Z0-9][\w.*•]*@[\w.*•]+\.[a-z]{2,})<',
-                    r'"([a-zA-Z0-9][\w.*•]*@[\w.*•]+\.[a-z]{2,})"',
+                """
+                Busca emails ofuscados. Soporta ofuscación con cualquier char
+                de OBFUSC_CHARS. Devuelve (match, source_pattern) para diag.
+                Solo cuenta como hint si tiene AL MENOS 1 char de ofuscación,
+                porque sino estaríamos devolviendo emails reales del HTML
+                (UA strings, footers, etc.).
+                """
+                candidates = []
+                for tag, pat in [
+                    ("between_tags",  rf'>([a-zA-Z0-9][\w.{OBFUSC_CC}]*@[\w.{OBFUSC_CC}]+\.[a-z]{{2,}})<'),
+                    ("in_quotes",     rf'"([a-zA-Z0-9][\w.{OBFUSC_CC}]*@[\w.{OBFUSC_CC}]+\.[a-z]{{2,}})"'),
+                    ("in_json_value", rf':\s*"([a-zA-Z0-9][\w.{OBFUSC_CC}]*@[\w.{OBFUSC_CC}]+\.[a-z]{{2,}})"'),
                 ]:
-                    m = re.search(pat, src)
-                    if m and any(c in m.group(1) for c in ('*', '•')):
-                        return m
+                    for m in re.finditer(pat, src):
+                        val = m.group(1)
+                        candidates.append((tag, val))
+                        if any(c in val for c in OBFUSC_CHARS):
+                            logger.debug(f"FB recovery email match ({tag}): {val!r}")
+                            return m
+                if candidates:
+                    logger.debug(
+                        f"FB recovery: {len(candidates)} emails candidatos "
+                        f"sin ofuscación, descartados. Primero: "
+                        f"{candidates[0][1]!r}"
+                    )
                 return None
 
             def _extract_phone(src):
-                for pat in [
-                    r'>(\+?[0-9\s•·\*]{4,20})<',
-                    r'"(\+?[0-9][0-9\s•·\*]{4,18})"',
+                candidates = []
+                for tag, pat in [
+                    ("between_tags",  rf'>(\+?[0-9\s{OBFUSC_CC}]{{4,25}})<'),
+                    ("in_quotes",     rf'"(\+?[0-9][0-9\s{OBFUSC_CC}]{{4,23}})"'),
+                    ("in_json_value", rf':\s*"(\+?[0-9][0-9\s{OBFUSC_CC}]{{4,23}})"'),
                 ]:
-                    m = re.search(pat, src)
-                    if m and any(c in m.group(1) for c in ('•', '·', '*')):
-                        return m
+                    for m in re.finditer(pat, src):
+                        val = m.group(1).strip()
+                        # Filtrar valores muy cortos o que parezcan timestamps
+                        if len(val) < 4:
+                            continue
+                        candidates.append((tag, val))
+                        if any(c in val for c in OBFUSC_CHARS):
+                            logger.debug(f"FB recovery phone match ({tag}): {val!r}")
+                            return m
+                if candidates:
+                    logger.debug(
+                        f"FB recovery: {len(candidates)} phones candidatos "
+                        f"sin ofuscación, descartados. Primero: "
+                        f"{candidates[0][1]!r}"
+                    )
                 return None
 
             em_m = _extract_email(html)
@@ -560,14 +597,18 @@ async def fb_lookup(query: str) -> dict:
         out["errors"].append("Input vacío")
         return out
 
-    # Detectar tipo de input
+    # Detectar tipo de input.
+    # Orden importa: user_id (puro dígito) ANTES que phone (debe llevar +),
+    # para que un FB user ID largo no se confunda con número telefónico.
     if EMAIL_RE.match(query):
         out["input_type"] = "email"
-    elif re.match(r"^\+?\d[\d\s\-]{6,}$", query):
-        out["input_type"] = "phone"
     elif re.match(r"^\d{8,17}$", query):
+        # Puro número de 8-17 dígitos sin + → User ID de Facebook
         out["input_type"] = "user_id"
         out["user_id"] = query
+    elif re.match(r"^\+\d[\d\s\-]{6,}$", query):
+        # Empieza con + → teléfono internacional
+        out["input_type"] = "phone"
     else:
         out["input_type"] = "username"
 

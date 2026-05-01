@@ -1100,10 +1100,18 @@ def format_fb_osint(data: dict) -> str:
         out.append("   <i>(Hints parciales del recovery de Facebook)</i>\n")
 
     # ── Foto de perfil ───────────────────────────────────────────────────────
+    # Prioridad: URL real del CDN (scontent.fbcdn.net) que sale del recovery,
+    # porque graph.facebook.com/{id}/picture devuelve placeholder en blanco
+    # para perfiles nuevos (IDs 615... post-2024).
     pic_urls = data.get("profile_pic_urls") or []
-    if data.get("user_id") and pic_urls:
+    real_pic = (rec or {}).get("profile_pic_url")
+    if real_pic or (data.get("user_id") and pic_urls):
         out.append("🖼️ <b>Foto de perfil</b>")
-        out.append(f"   ▪️ <a href='{pic_urls[0]}'>HD (large)</a>")
+        if real_pic:
+            out.append(f"   ▪️ <a href='{real_pic}'>HD (CDN real)</a>")
+        if pic_urls:
+            label = "HD (graph fallback)" if real_pic else "HD (large)"
+            out.append(f"   ▪️ <a href='{pic_urls[0]}'>{label}</a>")
         if len(pic_urls) > 1:
             out.append(f"   ▪️ <a href='{pic_urls[1]}'>Normal</a>")
         out.append("")
