@@ -30,7 +30,7 @@ from utils.access import load_authorized_users, add_user, remove_user, get_all_u
 from utils.rate_limit import check_rate_limit
 from utils.parse import extract_phone_and_target
 from utils.database import log_query, upsert_user, log_error, get_global_stats
-from config import BOT_TOKEN, logger, ADMIN_ID
+from config import BOT_TOKEN, logger, ADMIN_ID, ADMIN_IDS
 from datetime import datetime
 import re
 import asyncio
@@ -109,7 +109,7 @@ async def check_rate(update: Update, user_id: int) -> bool:
 
 async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    if user_id != ADMIN_ID:
+    if user_id not in ADMIN_IDS:
         return
 
     args = context.args

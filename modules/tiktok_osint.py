@@ -182,6 +182,37 @@ async def _scrape_web(username: str, client: httpx.AsyncClient) -> dict | None:
     return None
 
 
+# ── Fallback API interna TikTok (sin key) ────────────────────────────────────────
+
+async def _tiktok_api_internal(username: str, client: httpx.AsyncClient) -> dict | None:
+    """
+    Usa el endpoint interno de TikTok que la web usa al cargar perfiles.
+    No requiere API key. Funciona desde algunas IPs de cloud.
+    """
+    urls = [
+        f"https://www.tiktok.com/api/user/detail/?uniqueId={username}&aid=1988&app_language=en&device_platform=web_pc",
+        f"https://m.tiktok.com/api/user/detail/?uniqueId={username}&aid=1988",
+    ]
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Referer":    f"https://www.tiktok.com/@{username}",
+    }
+    for url in urls:
+        try:
+            r = await client.get(url, headers=headers, timeout=10.0)
+            if r.status_code != 200:
+                continue
+            d    = r.json()
+            info = (d.get("userInfo") or d.get("UserInfo") or {})
+            user  = info.get("user", {})
+            stats = info.get("stats", {})
+            if user.get("id"):
+                return {"user": user, "stats": stats, "_source": "tiktok_internal_api"}
+        except Exception as e:
+            logger.debug(f"TikTok internal API {url[:50]}: {e}")
+    return None
+
+
 # ── Fallback RapidAPI (si hay clave) ──────────────────────────────────────────
 
 async def _rapidapi_lookup(username: str, client: httpx.AsyncClient) -> dict | None:
@@ -297,10 +328,14 @@ async def tiktok_lookup(raw_input: str) -> dict:
         http2=False,
     ) as client:
 
-        # Intentar scraping web primero
+        # 1) Scraping HTML
         raw = await _scrape_web(username, client)
 
-        # Si el scraping falló o devolvió bot-check, intentar RapidAPI
+        # 2) API interna TikTok (sin key)
+        if raw is None or raw.get("_bot_check"):
+            raw = await _tiktok_api_internal(username, client)
+
+        # 3) RapidAPI (si hay clave)
         rapidapi_tried = False
         if raw is None or raw.get("_bot_check"):
             rapidapi_tried = True

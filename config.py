@@ -71,7 +71,17 @@ PROXY_URL = os.getenv("PROXY_URL", "")
 # o en tiempo de ejecucion con /admin.
 # NUNCA hardcodear IDs en este archivo.
 # ============================================
-ADMIN_ID = int(os.getenv("ADMIN_ID", "0") or "0")
+# ADMIN_ID puede ser un solo ID o varios separados por coma: "123,456"
+_admin_raw = os.getenv("ADMIN_ID", "0") or "0"
+ADMIN_IDS: set = set()
+for _a in _admin_raw.split(","):
+    try:
+        _ai = int(_a.strip())
+        if _ai > 0:
+            ADMIN_IDS.add(_ai)
+    except ValueError:
+        continue
+ADMIN_ID = next(iter(ADMIN_IDS), 0)  # compatibilidad con codigo existente
 
 _env_allowed = os.getenv("GEKOSINT_ALLOWED", "")
 ALLOWED_USERS: set = set()
@@ -83,8 +93,7 @@ for _uid in _env_allowed.split(","):
     except ValueError:
         continue
 
-if ADMIN_ID > 0:
-    ALLOWED_USERS.add(ADMIN_ID)
+ALLOWED_USERS.update(ADMIN_IDS)
 
 ACCESS_RESTRICTED = len(ALLOWED_USERS) > 0
 
