@@ -19,7 +19,7 @@ from collections import defaultdict, deque
 
 import httpx
 
-from config import RAPIDAPI_KEY
+from config import RAPIDAPI_KEY, PROXY_URL
 
 logger = logging.getLogger("GekOsint.TikTok")
 
@@ -322,10 +322,12 @@ async def tiktok_lookup(raw_input: str) -> dict:
         "profile_url": f"https://www.tiktok.com/@{username}",
     }
 
+    proxy = PROXY_URL if PROXY_URL else None
     async with httpx.AsyncClient(
         timeout=20.0,
         follow_redirects=True,
         http2=False,
+        proxy=proxy,
     ) as client:
 
         # 1) Scraping HTML
