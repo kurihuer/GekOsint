@@ -1,5 +1,16 @@
-# Variables de entorno (TOKENS Y SECRETOS)
+# Variables de entorno
 .env
+.env.*
+
+# Bases de datos
+*.db
+*.sqlite
+*.sqlite3
+
+# Sesiones y cookies
+sessions/
+cookies/
+*.session
 
 # Python
 __pycache__/
@@ -10,10 +21,14 @@ __pycache__/
 venv/
 env/
 
-# Archivos generados de tracking
+# Logs
+*.log
+logs/
+
+# Archivos generados
 pages/*.html
 
-# Datos locales (no versionar)
+# Datos locales
 authorized_users.json
 
 # IDE
@@ -27,23 +42,26 @@ Desktop.ini
 Thumbs.db
 .DS_Store
 
-# Archivos de test/deploy temporales
+# Archivos temporales
 test_*.py
 fix_*.py
 deploy_result.txt
 
-# Logs
-*.log
-
-# Archivos de memoria del proyecto
+# Proyecto
 mem.md
-
 GekOsint2/
 HexSecGPT/
 check_bot.py
 install_hexsecgpt.bat
 
-# v6.1
-gekosint.db
-.claude/
+# Debug
 fb_debug_paso2.html
+
+# Pytest
+.pytest_cache/
+
+# Mypy
+.mypy_cache/
+
+# Ruff
+.ruff_cache/
