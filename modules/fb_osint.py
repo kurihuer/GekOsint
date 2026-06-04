@@ -650,7 +650,9 @@ async def fb_lookup(query: str) -> dict:
 
     # 1) Si es username, resolver primero a user_id
     if out["input_type"] == "username" and not out["user_id"]:
-        resolved = await resolve_fb_user_id(query)
+        resolved = await resolve_fb_user_id(query) or {}
+        if not isinstance(resolved, dict):
+            resolved = {}
         if resolved.get("user_id"):
             out["user_id"] = resolved["user_id"]
             out["found"]   = True
@@ -659,7 +661,9 @@ async def fb_lookup(query: str) -> dict:
 
     # 2) Recovery hints — best-effort scrape (sin email/phone, ver docstring)
     await asyncio.sleep(INTER_REQUEST_WAIT)
-    recovery = await get_fb_recovery_hints(query)
+    recovery = await get_fb_recovery_hints(query) or {}
+    if not isinstance(recovery, dict):
+        recovery = {}
     out["recovery"] = recovery
 
     if recovery.get("found"):

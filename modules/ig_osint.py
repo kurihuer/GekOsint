@@ -219,6 +219,10 @@ async def get_recovery_hints(username: str) -> dict:
                 out["error"] = "Recovery endpoint: respuesta no JSON"
                 return out
 
+            if not isinstance(body, dict):
+                out["error"] = "Instagram devolvió respuesta inválida"
+                return out
+
             email = body.get("obfuscated_email") or ""
             phone = body.get("obfuscated_phone_number") or ""
             contact = body.get("contact_point") or ""
@@ -408,6 +412,9 @@ async def ig_lookup(username: str) -> dict:
 
     # 1) Instaloader (perfil + posts) — sync, en thread
     profile_data = await asyncio.to_thread(_instaloader_profile_sync, username)
+    profile_data = profile_data or {}
+    if not isinstance(profile_data, dict):
+        profile_data = {}
     out["session"] = profile_data.get("session")
     if profile_data.get("error"):
         out["errors"].append(profile_data["error"])

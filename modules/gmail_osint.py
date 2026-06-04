@@ -447,6 +447,10 @@ async def get_google_profile_authenticated(email: str) -> dict:
                     out["error"] = "People API respondió no-JSON"
                     return out
 
+                if not isinstance(data, dict):
+                    out["error"] = "People API devolvió datos inválidos"
+                    return out
+
                 matches = data.get("matches") or []
                 if not matches:
                     out["error"] = "Email no resuelve a una cuenta Google pública"
