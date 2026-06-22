@@ -1,0 +1,67 @@
+# Variables de entorno
+.env
+.env.*
+
+# Bases de datos
+*.db
+*.sqlite
+*.sqlite3
+
+# Sesiones y cookies
+sessions/
+cookies/
+*.session
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.venv/
+venv/
+env/
+
+# Logs
+*.log
+logs/
+
+# Archivos generados
+pages/*.html
+
+# Datos locales
+authorized_users.json
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+Desktop.ini
+Thumbs.db
+.DS_Store
+
+# Archivos temporales
+test_*.py
+fix_*.py
+deploy_result.txt
+
+# Proyecto
+mem.md
+GekOsint2/
+HexSecGPT/
+check_bot.py
+install_hexsecgpt.bat
+
+# Debug
+fb_debug_paso2.html
+
+# Pytest
+.pytest_cache/
+
+# Mypy
+.mypy_cache/
+
+# Ruff
+.ruff_cache/
