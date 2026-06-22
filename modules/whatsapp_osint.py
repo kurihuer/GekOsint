@@ -1,9 +1,29 @@
+# -*- coding: utf-8 -*-
+"""
+WhatsApp OSINT — estado de registro, foto, spam reports, caller-ID y Business.
+
+Mejoras v6.2:
+  - Todos los scrapers (wa.me, SpamCalls, Tellows, WhoCalledMe, Numbway,
+    Truecaller-web) ahora se enrutan por PROXY_URL si está configurado, para
+    no ser bloqueados desde la IP de datacenter de Koyeb.
+  - Caller-ID por RapidAPI (Truecaller) se mantiene como fuente principal.
+  - Manejo de errores y timeouts endurecido.
+"""
+
 import requests
 import re
 import phonenumbers
 from phonenumbers import geocoder, carrier as ph_carrier
 from config import logger, RAPIDAPI_KEY
 import time
+
+try:
+    from config import PROXY_URL
+except Exception:
+    PROXY_URL = ""
+
+# Proxy para scrapers que bloquean IPs de datacenter (sitios web, NO APIs)
+_PROXIES = {"http": PROXY_URL, "https": PROXY_URL} if PROXY_URL else None
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
@@ -12,12 +32,13 @@ HEADERS = {
 _CACHE = {}
 _TTL = 600
 
+
 def check_wa_registered(clean):
     try:
         r = requests.get(
             f"https://wa.me/{clean}",
             headers={"User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15"},
-            timeout=10, allow_redirects=True
+            timeout=10, allow_redirects=True, proxies=_PROXIES,
         )
         if r.status_code == 200:
             if "api.whatsapp.com/send" in r.url or "api.whatsapp.com/send" in r.text:
@@ -28,13 +49,14 @@ def check_wa_registered(clean):
         logger.debug(f"wa.me: {e}")
     return None
 
+
 def check_spam_reports(clean):
     results = {"total_reports": 0, "sources": [], "labels": []}
 
     try:
         r = requests.get(
             f"https://spamcalls.net/en/number/{clean}",
-            headers=HEADERS, timeout=8
+            headers=HEADERS, timeout=8, proxies=_PROXIES,
         )
         if r.status_code == 200:
             count_match = re.search(r'(\d+)\s*(?:report|reporte)', r.text, re.IGNORECASE)
@@ -52,7 +74,7 @@ def check_spam_reports(clean):
     try:
         r2 = requests.get(
             f"https://whocalledme.com/PhoneNumber/{clean}",
-            headers=HEADERS, timeout=8
+            headers=HEADERS, timeout=8, proxies=_PROXIES,
         )
         if r2.status_code == 200:
             count_match = re.search(r'(\d+)\s*(?:comment|reporte|report)', r2.text, re.IGNORECASE)
@@ -67,7 +89,7 @@ def check_spam_reports(clean):
     try:
         r3 = requests.get(
             f"https://www.tellows.com/num/{clean}",
-            headers=HEADERS, timeout=8
+            headers=HEADERS, timeout=8, proxies=_PROXIES,
         )
         if r3.status_code == 200:
             score_match = re.search(r'score["\s:]+(\d)', r3.text, re.IGNORECASE)
@@ -82,13 +104,13 @@ def check_spam_reports(clean):
 
     return results
 
+
 def get_wa_profile_photo(clean):
     try:
         r = requests.get(
             f"https://wa.me/{clean}",
             headers={"User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15"},
-            timeout=10,
-            allow_redirects=True
+            timeout=10, allow_redirects=True, proxies=_PROXIES,
         )
         if r.status_code != 200:
             return None
@@ -106,12 +128,13 @@ def get_wa_profile_photo(clean):
     except Exception:
         return None
 
+
 def check_wa_business(clean):
     try:
         r = requests.get(
             f"https://wa.me/{clean}",
             headers={"User-Agent": "WhatsApp/2.23.20.0 B"},
-            timeout=8, allow_redirects=True
+            timeout=8, allow_redirects=True, proxies=_PROXIES,
         )
         if r.status_code == 200:
             text = r.text.lower()
@@ -121,8 +144,10 @@ def check_wa_business(clean):
         pass
     return False
 
+
 def get_social_presence(clean, e164):
     return {}
+
 
 def _get_caller_name(clean, country_code_alpha, national_number):
     name = None
@@ -132,7 +157,7 @@ def _get_caller_name(clean, country_code_alpha, national_number):
         r = requests.get(
             f"https://numbway.com/phone/{clean}",
             headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"},
-            timeout=10
+            timeout=10, proxies=_PROXIES,
         )
         if r.status_code == 200:
             name_match = re.search(r'<h2[^>]*>([^<]{2,60})</h2>', r.text)
@@ -144,6 +169,7 @@ def _get_caller_name(clean, country_code_alpha, national_number):
     except Exception as e:
         logger.debug(f"Numbway WA: {e}")
 
+    # Truecaller via RapidAPI — es API, NO necesita proxy
     if not name and RAPIDAPI_KEY:
         try:
             r = requests.post(
@@ -153,10 +179,7 @@ def _get_caller_name(clean, country_code_alpha, national_number):
                     "x-rapidapi-host": "truecaller-api3.p.rapidapi.com",
                     "x-rapidapi-key": RAPIDAPI_KEY
                 },
-                data={
-                    "phone": national_number,
-                    "countryCode": country_code_alpha
-                },
+                data={"phone": national_number, "countryCode": country_code_alpha},
                 timeout=12
             )
             if r.status_code == 200:
@@ -173,7 +196,7 @@ def _get_caller_name(clean, country_code_alpha, national_number):
         try:
             r = requests.get(
                 f"https://spamcalls.net/en/number/{clean}",
-                headers=HEADERS, timeout=8
+                headers=HEADERS, timeout=8, proxies=_PROXIES,
             )
             if r.status_code == 200:
                 name_match = re.search(r'caller["\s]*(?:name|id)[^:]*:\s*"?([^"<]{2,50})"?', r.text, re.IGNORECASE)
@@ -186,6 +209,7 @@ def _get_caller_name(clean, country_code_alpha, national_number):
             pass
 
     return name, source
+
 
 def analyze_whatsapp(number):
     try:

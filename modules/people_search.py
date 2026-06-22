@@ -1,3 +1,16 @@
+# -*- coding: utf-8 -*-
+"""
+People Search — nombre completo → variantes de username, perfiles verificables,
+buscadores de personas y dorks de Google/Bing/DuckDuckGo.
+
+Mejoras v6.2:
+  - Verificación de perfiles SOLO en sitios fiables (GitHub API, Reddit JSON,
+    Keybase, Gravatar, Linktree, Telegram). Las redes con muro de login
+    (Instagram, Facebook, TikTok, LinkedIn, X) ya NO se "confirman" por HTTP
+    (daban falsos positivos) — se entregan como dorks de búsqueda.
+  - Eliminado código muerto con bug latente (`_search_pipl_links`).
+  - Generación de variantes de username y links a buscadores de personas.
+"""
 
 import requests
 import re
@@ -7,12 +20,13 @@ import unicodedata
 from config import logger
 
 HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                  "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Accept-Language": "es-MX,es;q=0.9,en;q=0.8",
 }
 
 _CACHE = {}
-_TTL  = 600
+_TTL = 600
 
 
 def _normalize(text):
@@ -26,124 +40,104 @@ def generate_username_variants(name, surname):
     n1 = n[0] if n else ''
     s1 = s[0] if s else ''
     variants = list({
-        f"{n}{s}",
-        f"{n}.{s}",
-        f"{n}_{s}",
-        f"{n1}{s}",
-        f"{n}.{s1}",
-        f"{n}{s1}",
-        f"{s}{n}",
-        f"{s}.{n}",
-        f"{s}_{n}",
-        f"{s1}{n}",
-        f"{n}-{s}",
-        f"{n}{s[:4]}",
-        f"{s}{n[:3]}",
-        f"{n[:4]}{s[:4]}",
+        f"{n}{s}", f"{n}.{s}", f"{n}_{s}", f"{n1}{s}", f"{n}.{s1}",
+        f"{n}{s1}", f"{s}{n}", f"{s}.{n}", f"{s}_{n}", f"{s1}{n}",
+        f"{n}-{s}", f"{n}{s[:4]}", f"{s}{n[:3]}", f"{n[:4]}{s[:4]}",
     })
     return [v for v in variants if len(v) >= 3]
 
 
-SOCIAL_SITES = {
-    "Instagram":   "https://instagram.com/{}",
-    "Twitter/X":   "https://x.com/{}",
-    "Facebook":    "https://facebook.com/{}",
-    "TikTok":      "https://tiktok.com/@{}",
-    "Reddit":      "https://reddit.com/user/{}",
-    "LinkedIn":    "https://linkedin.com/in/{}",
-    "GitHub":      "https://github.com/{}",
-    "Telegram":    "https://t.me/{}",
-    "Pinterest":   "https://pinterest.com/{}",
-    "Twitch":      "https://twitch.tv/{}",
-    "Spotify":     "https://open.spotify.com/user/{}",
-    "SoundCloud":  "https://soundcloud.com/{}",
-    "Medium":      "https://medium.com/@{}",
-    "Linktree":    "https://linktr.ee/{}",
-    "Threads":     "https://www.threads.net/@{}",
-    "Gravatar":    "https://en.gravatar.com/{}",
-    "Keybase":     "https://keybase.io/{}",
-    "Patreon":     "https://www.patreon.com/{}",
-    "Behance":     "https://www.behance.net/{}",
-    "Dribbble":    "https://dribbble.com/{}",
+# Sitios donde SÍ se puede verificar existencia de forma fiable (API/JSON/status)
+VERIFIABLE_SITES = {
+    "GitHub":   {"url": "https://api.github.com/users/{}",            "method": "json",
+                 "display": "https://github.com/{}"},
+    "Reddit":   {"url": "https://www.reddit.com/user/{}/about.json",  "method": "json",
+                 "display": "https://reddit.com/user/{}"},
+    "Keybase":  {"url": "https://keybase.io/_/api/1.0/user/lookup.json?username={}",
+                 "method": "keybase", "display": "https://keybase.io/{}"},
+    "Gravatar": {"url": "https://en.gravatar.com/{}.json",            "method": "json",
+                 "display": "https://en.gravatar.com/{}"},
+    "Linktree": {"url": "https://linktr.ee/{}",                       "method": "status",
+                 "display": "https://linktr.ee/{}"},
 }
 
-NOT_FOUND_PATTERNS = [
-    "page not found", "user not found", "profile not found",
-    "doesn't exist", "no longer exists", "isn't available",
-    "404", "no results", "hmm...this page", "sorry, this page",
-    "this account doesn't exist", "page doesn't exist",
-    "nothing here", "user not available", "cuenta no disponible",
-    "we couldn't find", "no encontramos", "usuario no encontrado",
-]
+# Redes con muro de login → no se confirman (solo dorks). Referencia informativa.
+SEARCH_ONLY_NETWORKS = ["Instagram", "Facebook", "TikTok", "LinkedIn", "Twitter/X"]
 
 
-def _check_url(url):
+def _check_verifiable(site, cfg, variant, session):
+    url = cfg["url"].format(variant)
+    disp = cfg.get("display", cfg["url"]).format(variant)
     try:
-        r = requests.get(url, headers=HEADERS, timeout=8, allow_redirects=True)
-        if r.status_code == 404:
-            return False
-        if r.status_code == 200:
-            txt = r.text.lower()[:3000]
-            return not any(p in txt for p in NOT_FOUND_PATTERNS)
+        if cfg["method"] == "json":
+            r = session.get(url, timeout=8)
+            if r.status_code == 200:
+                return {"site": site, "url": disp, "username": variant}
+            return None
+        if cfg["method"] == "keybase":
+            r = session.get(url, timeout=8)
+            if r.status_code == 200:
+                data = r.json()
+                if data.get("status", {}).get("code") == 0 and data.get("them"):
+                    return {"site": site, "url": disp, "username": variant}
+            return None
+        if cfg["method"] == "status":
+            r = session.get(url, timeout=7, allow_redirects=True)
+            if r.status_code == 200 and "not found" not in (r.text or "").lower()[:2000]:
+                return {"site": site, "url": disp, "username": variant}
+            return None
     except Exception:
         pass
-    return False
+    return None
 
 
-def _search_social_for_variant(variant):
+def search_verifiable_profiles(name, surname):
+    """Verifica variantes de username SOLO en sitios fiables (sin falsos positivos)."""
+    variants = generate_username_variants(name, surname)[:8]
     found = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as ex:
-        futures = {
-            ex.submit(_check_url, tmpl.format(variant)): (site, tmpl.format(variant))
-            for site, tmpl in SOCIAL_SITES.items()
-        }
-        for future in concurrent.futures.as_completed(futures, timeout=20):
-            site, url = futures[future]
-            try:
-                if future.result():
-                    found.append({"site": site, "url": url, "username": variant})
-            except Exception:
-                pass
+    seen = set()
+    session = requests.Session()
+    session.headers.update(HEADERS)
+    try:
+        tasks = []
+        with concurrent.futures.ThreadPoolExecutor(max_workers=12) as ex:
+            futures = {}
+            for v in variants:
+                for site, cfg in VERIFIABLE_SITES.items():
+                    fut = ex.submit(_check_verifiable, site, cfg, v, session)
+                    futures[fut] = (site, v)
+            for fut in concurrent.futures.as_completed(futures, timeout=40):
+                try:
+                    res = fut.result()
+                    if res and res["url"] not in seen:
+                        seen.add(res["url"])
+                        found.append(res)
+                except Exception:
+                    pass
+    except Exception as e:
+        logger.debug(f"search_verifiable_profiles: {e}")
+    finally:
+        session.close()
+    found.sort(key=lambda x: x["site"])
     return found
 
 
-def search_social_profiles(name, surname):
-    variants  = generate_username_variants(name, surname)
-    all_found = []
-    seen_urls = set()
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=6) as ex:
-        futures = {ex.submit(_search_social_for_variant, v): v for v in variants[:8]}
-        for fut in concurrent.futures.as_completed(futures, timeout=60):
-            try:
-                results = fut.result()
-                for r in results:
-                    if r["url"] not in seen_urls:
-                        seen_urls.add(r["url"])
-                        all_found.append(r)
-            except Exception:
-                pass
-
-    all_found.sort(key=lambda x: x["site"])
-    return all_found
-
-
-def _search_pipl_links(full_name):
+def _people_search_links(full_name):
     encoded = requests.utils.quote(full_name)
     return {
-        "Pipl":          f"https://pipl.com/search/?q={encoded}",
-        "Spokeo":        f"https://www.spokeo.com/search?q={encoded}",
-        "BeenVerified":  f"https://www.beenverified.com/people/{encoded.replace('%20', '-')}",
-        "Intelius":      f"https://www.intelius.com/people-search/results/?firstName={requests.utils.quote(name)}&lastName={requests.utils.quote(surname)}" if False else f"https://www.intelius.com/search/people/name/{encoded}/",
+        "Pipl":             f"https://pipl.com/search/?q={encoded}",
+        "Spokeo":           f"https://www.spokeo.com/search?q={encoded}",
+        "BeenVerified":     f"https://www.beenverified.com/people/{encoded.replace('%20', '-')}",
         "FastPeopleSearch": f"https://www.fastpeoplesearch.com/name/{encoded.replace('%20', '-')}",
         "TruePeopleSearch": f"https://www.truepeoplesearch.com/results?name={encoded}",
-        "WhitePages":    f"https://www.whitepages.com/name/{encoded.replace('%20', '+')}",
-        "192.com":       f"https://www.192.com/people/find/{encoded.replace('%20', '-')}/",
-        "PeekYou":       f"https://www.peekyou.com/{encoded.replace('%20', '_')}",
+        "WhitePages":       f"https://www.whitepages.com/name/{encoded.replace('%20', '+')}",
+        "PeekYou":          f"https://www.peekyou.com/{encoded.replace('%20', '_')}",
+        "Intelius":         f"https://www.intelius.com/search/people/name/{encoded}/",
+        "ThatsThem":        f"https://thatsthem.com/name/{encoded.replace('%20', '-')}",
     }
 
 
-def _google_dorks(full_name, name, surname, context: str | None = None):
+def _google_dorks(full_name, name, surname, context=None):
     q_full    = requests.utils.quote(f'"{full_name}"')
     q_social  = requests.utils.quote(f'"{full_name}" site:linkedin.com OR site:facebook.com OR site:instagram.com')
     q_email   = requests.utils.quote(f'"{full_name}" email OR correo OR "@"')
@@ -170,36 +164,6 @@ def _google_dorks(full_name, name, surname, context: str | None = None):
     }
 
 
-def _check_linkedin(name, surname):
-    result = {"found": False, "profiles": []}
-    try:
-        search_url = (
-            f"https://www.linkedin.com/pub/dir/{requests.utils.quote(name)}"
-            f"/{requests.utils.quote(surname)}"
-        )
-        r = requests.get(search_url, headers=HEADERS, timeout=8, allow_redirects=True)
-        if r.status_code == 200 and "profile-card" in r.text.lower():
-            result["found"] = True
-            matches = re.findall(r'href="(https://www\.linkedin\.com/in/[^"?]+)"', r.text)
-            result["profiles"] = list(set(matches))[:5]
-    except Exception as e:
-        logger.debug(f"LinkedIn search error: {e}")
-    return result
-
-
-def _check_facebook(full_name):
-    result = {"found": False, "url": ""}
-    try:
-        search_url = f"https://www.facebook.com/public/{requests.utils.quote(full_name.replace(' ', '-'))}"
-        r = requests.get(search_url, headers=HEADERS, timeout=8, allow_redirects=True)
-        if r.status_code == 200 and full_name.lower().split()[0] in r.text.lower():
-            result["found"] = True
-            result["url"]   = search_url
-    except Exception as e:
-        logger.debug(f"Facebook search error: {e}")
-    return result
-
-
 def search_people(full_input):
     raw = (full_input or "").strip()
     context = None
@@ -221,51 +185,19 @@ def search_people(full_input):
     if entry and now - entry[0] <= _TTL:
         return entry[1]
 
-    social_profiles = search_social_profiles(name, surname)
-    candidates = []
-    variants = generate_username_variants(name, surname)[:6]
-    for v in variants:
-        for site, tmpl in list(SOCIAL_SITES.items())[:10]:
-            candidates.append({"site": site, "url": tmpl.format(v), "username": v})
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
-        fut_li = ex.submit(_check_linkedin, name, surname)
-        fut_fb = ex.submit(_check_facebook, full)
-        try:    linkedin = fut_li.result(timeout=12)
-        except: linkedin = {"found": False, "profiles": []}
-        try:    facebook = fut_fb.result(timeout=12)
-        except: facebook = {"found": False, "url": ""}
+    verified = search_verifiable_profiles(name, surname)
 
     result = {
-        "full_name":       full,
-        "name":            name,
-        "surname":         surname,
-        "variants_checked": generate_username_variants(name, surname)[:8],
-        "social_profiles": social_profiles,
-        "candidate_profiles": candidates[:40],
-        "linkedin":        linkedin,
-        "facebook":        facebook,
-        "osint_links":     _pipl_links(full),
-        "dorks":           {k: v for k, v in _google_dorks(full, name, surname, context=context).items() if v},
-        "context":         context,
+        "full_name":          full,
+        "name":               name,
+        "surname":            surname,
+        "variants_checked":   generate_username_variants(name, surname)[:8],
+        "social_profiles":    verified,            # solo perfiles CONFIRMADOS
+        "search_networks":    SEARCH_ONLY_NETWORKS,  # estos van por dorks
+        "osint_links":        _people_search_links(full),
+        "dorks":              {k: v for k, v in _google_dorks(full, name, surname, context=context).items() if v},
+        "context":            context,
     }
 
     _CACHE[ck] = (now, result)
     return result
-
-
-def _pipl_links(full_name):
-    encoded = requests.utils.quote(full_name)
-    parts   = full_name.split()
-    fname   = requests.utils.quote(parts[0]) if parts else ""
-    lname   = requests.utils.quote(' '.join(parts[1:])) if len(parts) > 1 else ""
-    return {
-        "Pipl":             f"https://pipl.com/search/?q={encoded}",
-        "Spokeo":           f"https://www.spokeo.com/search?q={encoded}",
-        "BeenVerified":     f"https://www.beenverified.com/people/{encoded.replace('%20', '-')}",
-        "FastPeopleSearch": f"https://www.fastpeoplesearch.com/name/{encoded.replace('%20', '-')}",
-        "TruePeopleSearch": f"https://www.truepeoplesearch.com/results?name={encoded}",
-        "WhitePages":       f"https://www.whitepages.com/name/{encoded.replace('%20', '+')}",
-        "PeekYou":          f"https://www.peekyou.com/{encoded.replace('%20', '_')}",
-        "Intelius":         f"https://www.intelius.com/search/people/name/{encoded}/",
-    }

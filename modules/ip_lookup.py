@@ -1,3 +1,17 @@
+# -*- coding: utf-8 -*-
+"""
+IP Lookup — geolocalización, ASN/WHOIS, reputación y puertos.
+
+Mejoras v6.2:
+  - Se elimina el escaneo de puertos por socket (`socket.connect_ex`): desde
+    una IP de datacenter (Koyeb) es lento, poco fiable y a menudo lo bloquea
+    el firewall del objetivo. Los puertos ahora vienen de Shodan (si hay key);
+    si no, se indica claramente que requiere SHODAN_API_KEY en vez de devolver
+    "Ninguno detectado" (que era engañoso).
+  - Geolocalización con doble fuente (ip-api.com + ipinfo.io) y caché.
+  - Reputación en paralelo (Shodan, AbuseIPDB, GreyNoise, VirusTotal, DNSBL).
+  - Manejo de errores y timeouts endurecido.
+"""
 
 import requests
 import socket
@@ -14,6 +28,7 @@ HEADERS = {
 _CACHE = {}
 _TTL = 600
 
+
 def _is_valid_ip(ip):
     if re.match(r'^(\d{1,3}\.){3}\d{1,3}$', ip):
         parts = ip.split('.')
@@ -22,12 +37,14 @@ def _is_valid_ip(ip):
         return True
     return False
 
+
 def _is_private_ip(ip):
     private_ranges = [
         r'^10\.', r'^172\.(1[6-9]|2[0-9]|3[01])\.', r'^192\.168\.',
         r'^127\.', r'^0\.', r'^169\.254\.', r'^224\.', r'^240\.'
     ]
     return any(re.match(p, ip) for p in private_ranges)
+
 
 def _get_vt(ip):
     if not VT_API_KEY:
@@ -42,6 +59,7 @@ def _get_vt(ip):
     except Exception:
         pass
     return {}
+
 
 def _get_abuseipdb(ip):
     if not ABUSEIPDB_KEY:
@@ -59,6 +77,7 @@ def _get_abuseipdb(ip):
         pass
     return {}
 
+
 def _get_shodan(ip):
     if not SHODAN_API_KEY:
         return {}
@@ -72,6 +91,7 @@ def _get_shodan(ip):
     except Exception:
         pass
     return {}
+
 
 def _get_greynoise(ip):
     if not GREYNOISE_API_KEY:
@@ -87,6 +107,7 @@ def _get_greynoise(ip):
         pass
     return {}
 
+
 def _get_abuse_info(ip):
     result = {"blacklisted": False, "reports": 0, "threat_type": "Ninguna"}
     vt = _get_vt(ip)
@@ -97,6 +118,7 @@ def _get_abuse_info(ip):
             result["reports"] = malicious
             result["threat_type"] = "Malicioso (VT)"
     try:
+        # DNSBL: consultas DNS rápidas (no son escaneo de puertos)
         dnsbl_hosts = ["zen.spamhaus.org", "bl.spamcop.net", "dnsbl.sorbs.net"]
         reversed_ip = '.'.join(reversed(ip.split('.')))
         for dnsbl in dnsbl_hosts:
@@ -111,6 +133,7 @@ def _get_abuse_info(ip):
     except Exception:
         pass
     return result
+
 
 def _get_whois_basic(ip):
     result = {"net_name": "N/A", "net_range": "N/A", "abuse_contact": "N/A"}
@@ -133,23 +156,21 @@ def _get_whois_basic(ip):
         pass
     return result
 
-def _get_open_ports(ip):
-    common_ports = {
-        21: "FTP", 22: "SSH", 25: "SMTP", 53: "DNS",
-        80: "HTTP", 443: "HTTPS", 3306: "MySQL", 3389: "RDP",
-        5432: "PostgreSQL", 8080: "HTTP-Alt", 8443: "HTTPS-Alt"
-    }
-    open_ports = []
-    for port, service in common_ports.items():
+
+def _ports_from_shodan(shodan_data):
+    """Construye la lista de puertos a partir de los datos de Shodan."""
+    ports = shodan_data.get("ports") or []
+    if not ports:
+        return None
+    labeled = []
+    for p in sorted(set(ports)):
         try:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.settimeout(0.5)
-            if sock.connect_ex((ip, port)) == 0:
-                open_ports.append(f"{port}/{service}")
-            sock.close()
+            svc = socket.getservbyport(int(p))
+            labeled.append(f"{p}/{svc.upper()}")
         except Exception:
-            pass
-    return open_ports if open_ports else ["Ninguno detectado"]
+            labeled.append(f"{p}/TCP")
+    return labeled
+
 
 def get_ip_info(ip_address):
     ip_address = ip_address.strip()
@@ -167,7 +188,8 @@ def get_ip_info(ip_address):
         try:
             ip_address = socket.gethostbyname(ip_address)
         except Exception:
-            return {"error": f"'{ip_address}' no es una IP válida ni un hostname resoluble.", "missing_keys": missing_keys}
+            return {"error": f"'{ip_address}' no es una IP válida ni un hostname resoluble.",
+                    "missing_keys": missing_keys}
     if _is_private_ip(ip_address):
         return {"error": f"'{ip_address}' es una IP privada/reservada.", "missing_keys": missing_keys}
 
@@ -214,8 +236,7 @@ def get_ip_info(ip_address):
         risk_score, risk_factors = 0, []
         if is_proxy:    risk_score += 40; risk_factors.append("VPN/Proxy")
         if is_hosting:  risk_score += 30; risk_factors.append("Datacenter")
-        
-        # Mejorar lógica de puertos desde Shodan
+
         shodan_ports = shodan_data.get("ports", [])
         if shodan_ports:
             risk_score += 10
@@ -228,12 +249,11 @@ def get_ip_info(ip_address):
 
         if gn_data.get("classification") and str(gn_data["classification"]).lower() != "benign":
             risk_score += 15; risk_factors.append(f"GreyNoise {gn_data['classification']}")
-        
+
         abuse = _get_abuse_info(ip_address)
         if abuse.get("blacklisted"):
-            risk_score += 30; risk_factors.append(f"Blacklist ({abuse.get('reports',0)})")
+            risk_score += 30; risk_factors.append(f"Blacklist ({abuse.get('reports', 0)})")
 
-        # Capar el risk_score a 100
         risk_score = min(100, risk_score)
 
         if   risk_score > 80: risk_label = "⛔ Crítica"
@@ -254,20 +274,16 @@ def get_ip_info(ip_address):
         except Exception:
             pass
 
-        whois      = _get_whois_basic(ip_address)
-        open_ports = _get_open_ports(ip_address)
-        if shodan_data.get("ports"):
-            try:
-                extra_ports = []
-                for p in shodan_data["ports"]:
-                    try:
-                        svc = socket.getservbyport(int(p))
-                        extra_ports.append(f"{p}/{svc.upper()}")
-                    except Exception:
-                        extra_ports.append(f"{p}/TCP")
-                open_ports = sorted(list({*open_ports, *extra_ports}))
-            except Exception:
-                pass
+        whois = _get_whois_basic(ip_address)
+
+        # Puertos: SOLO desde Shodan (sin escaneo por socket)
+        ports_from_shodan = _ports_from_shodan(shodan_data)
+        if ports_from_shodan:
+            open_ports = ports_from_shodan
+        elif SHODAN_API_KEY:
+            open_ports = ["Ninguno expuesto (según Shodan)"]
+        else:
+            open_ports = ["Requiere SHODAN_API_KEY"]
 
         if is_mobile:        conn_type = "📱 Móvil"
         elif is_hosting:     conn_type = "🏢 Datacenter/Hosting"

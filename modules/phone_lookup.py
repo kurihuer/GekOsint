@@ -1,7 +1,11 @@
 """
 Phone Intelligence — módulo mejorado.
-Añade: riesgo HLR estimado, análisis de portabilidad, enriquecimiento
-de datos de carrier, detección VOIP/virtual, y más fuentes de lookup.
+
+v6.2: los scrapers web (Truecaller-web, SpamCalls, Tellows, wa.me) ahora se
+enrutan por PROXY_URL si está configurado, para no ser bloqueados desde la IP
+de datacenter de Koyeb. El caller-ID por RapidAPI (Truecaller) sigue siendo la
+fuente principal (es API, no necesita proxy). Datos base (carrier, tipo, región)
+vienen de la librería `phonenumbers` (offline, muy fiable).
 """
 
 import phonenumbers
@@ -11,11 +15,18 @@ import re
 from config import logger, RAPIDAPI_KEY, NUMVERIFY_KEY
 from modules.geolocation import get_ip_geolocation
 
+try:
+    from config import PROXY_URL
+except Exception:
+    PROXY_URL = ""
+
+# Proxy SOLO para scrapers web (sitios que bloquean datacenter), NO para APIs
+_PROXIES = {"http": PROXY_URL, "https": PROXY_URL} if PROXY_URL else None
+
 # ── Constantes ────────────────────────────────────────────────────────────────
 _UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 _HEADERS = {"User-Agent": _UA}
 
-# IPs representativas por carrier (para geo aproximada del operador)
 _CARRIER_IPS = {
     "telcel": "148.244.0.0",      "movistar": "177.228.0.0",
     "at&t":   "107.223.0.0",      "claro":    "189.216.0.0",
@@ -26,14 +37,13 @@ _CARRIER_IPS = {
     "totalplay": "187.254.0.0",   "virgin":   "66.54.0.0",
 }
 
-# Carriers conocidos por VOIP / números virtuales
 _VOIP_KEYWORDS = {"twilio", "voip", "google voice", "skype", "magicjack",
                   "bandwidth", "vonage", "textplus", "grasshopper", "ringcentral",
                   "virtual", "openphone", "talkatone", "textfree", "textnow"}
 
 # ── Helpers internos ──────────────────────────────────────────────────────────
 
-def _carrier_ip(carrier_name: str) -> str | None:
+def _carrier_ip(carrier_name: str):
     if not carrier_name:
         return None
     low = carrier_name.lower()
@@ -51,7 +61,7 @@ def _is_voip_carrier(carrier_name: str) -> bool:
 
 
 def _country_info(country_code: str) -> dict:
-    """Datos básicos del país vía restcountries."""
+    """Datos básicos del país vía restcountries (API, sin proxy)."""
     try:
         r = requests.get(
             f"https://restcountries.com/v3.1/alpha/{country_code}",
@@ -97,20 +107,15 @@ def _numverify(e164: str) -> dict:
 
 
 def _scrape_truecaller_web(clean_number: str, country_alpha: str) -> dict:
-    """
-    Intenta obtener el nombre de caller desde Truecaller web scraping.
-    Fallback cuando no hay API key de RapidAPI.
-    """
+    """Nombre de caller desde Truecaller web (fallback sin API key). Vía proxy."""
     result = {"name": None, "spam_score": 0, "reported": False}
     try:
         r = requests.get(
             f"https://www.truecaller.com/search/{country_alpha.lower()}/{clean_number}",
             headers={**_HEADERS, "Accept-Language": "es-MX,es;q=0.9"},
-            timeout=10,
-            allow_redirects=True,
+            timeout=10, allow_redirects=True, proxies=_PROXIES,
         )
         if r.status_code == 200:
-            # Buscar name en JSON-LD o meta
             m = re.search(r'"name"\s*:\s*"([^"]{2,80})"', r.text)
             if m:
                 name = m.group(1).strip()
@@ -132,13 +137,12 @@ def _scrape_truecaller_web(clean_number: str, country_alpha: str) -> dict:
     return result
 
 
-def _check_whatsapp_registered(clean_number: str) -> bool | None:
+def _check_whatsapp_registered(clean_number: str):
     try:
         r = requests.get(
             f"https://wa.me/{clean_number}",
             headers={"User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15"},
-            timeout=8,
-            allow_redirects=True,
+            timeout=8, allow_redirects=True, proxies=_PROXIES,
         )
         if r.status_code == 200:
             if "api.whatsapp.com/send" in (r.url or "") or "api.whatsapp.com/send" in (r.text or ""):
@@ -155,7 +159,7 @@ def _scrape_spamcalls(clean_number: str) -> dict:
     try:
         r = requests.get(
             f"https://spamcalls.net/en/number/{clean_number}",
-            headers=_HEADERS, timeout=8,
+            headers=_HEADERS, timeout=8, proxies=_PROXIES,
         )
         if r.status_code == 200:
             m_name = re.search(r'caller["\s]*(?:name|id)[^:]*:\s*"?([^"<]{2,50})"?', r.text, re.IGNORECASE)
@@ -166,7 +170,6 @@ def _scrape_spamcalls(clean_number: str) -> dict:
             m_count = re.search(r'(\d+)\s*(?:report|reporte)', r.text, re.IGNORECASE)
             if m_count:
                 result["reports"] = int(m_count.group(1))
-            # Etiquetas
             labels = re.findall(r'(?:label|type|tag)["\s]*:\s*"([^"]{2,40})"', r.text, re.IGNORECASE)
             result["labels"] = list({l.strip() for l in labels if l.strip()})[:5]
     except Exception as e:
@@ -179,7 +182,7 @@ def _scrape_tellows(clean_number: str) -> dict:
     try:
         r = requests.get(
             f"https://www.tellows.com/num/{clean_number}",
-            headers=_HEADERS, timeout=8,
+            headers=_HEADERS, timeout=8, proxies=_PROXIES,
         )
         if r.status_code == 200:
             m_score = re.search(r'"tellowsScore"\s*:\s*(\d+)', r.text)
@@ -197,6 +200,7 @@ def _scrape_tellows(clean_number: str) -> dict:
 
 
 def _rapidapi_truecaller(national: str, country_alpha: str) -> dict:
+    """Truecaller via RapidAPI — API, NO usa proxy."""
     if not RAPIDAPI_KEY:
         return {}
     try:
@@ -237,8 +241,8 @@ def _rapidapi_truecaller(national: str, country_alpha: str) -> dict:
 
 # ── Detección regional por lada ───────────────────────────────────────────────
 
-_REGIONS: dict[int, dict[str, str]] = {
-    52: {   # México
+_REGIONS = {
+    52: {
         "55": "Ciudad de México", "33": "Guadalajara, Jalisco",
         "81": "Monterrey, Nuevo León", "222": "Puebla",
         "442": "Querétaro", "998": "Cancún, Quintana Roo",
@@ -250,32 +254,31 @@ _REGIONS: dict[int, dict[str, str]] = {
         "999": "Mérida, Yucatán", "312": "Colima",
         "722": "Toluca, Estado de México", "735": "Cuautla, Morelos",
     },
-    57: {   # Colombia
+    57: {
         "601": "Bogotá", "604": "Medellín, Antioquia",
         "602": "Cali, Valle", "605": "Costa Caribe",
         "607": "Bucaramanga, Santander",
     },
-    54: {   # Argentina
+    54: {
         "11": "Buenos Aires", "351": "Córdoba",
         "341": "Rosario", "261": "Mendoza",
     },
-    51: {   # Perú
+    51: {
         "1": "Lima", "44": "Arequipa", "54": "Cusco", "74": "Piura",
     },
-    56: {   # Chile
+    56: {
         "2": "Santiago", "32": "Valparaíso", "41": "Concepción",
     },
-    58: {   # Venezuela
+    58: {
         "212": "Caracas", "261": "Maracaibo", "241": "Valencia",
     },
-    34: {   # España
+    34: {
         "91": "Madrid", "93": "Barcelona", "96": "Valencia",
         "95": "Sevilla", "94": "Bilbao",
     },
 }
 
-_REGION_COORDS: dict[str, dict] = {
-    # México
+_REGION_COORDS = {
     "Ciudad de México":           {"lat": 19.4326,  "lon": -99.1332},
     "Guadalajara, Jalisco":       {"lat": 20.6597,  "lon": -103.3496},
     "Monterrey, Nuevo León":      {"lat": 25.6866,  "lon": -100.3161},
@@ -292,30 +295,24 @@ _REGION_COORDS: dict[str, dict] = {
     "León, Guanajuato":           {"lat": 21.1221,  "lon": -101.6824},
     "Mérida, Yucatán":            {"lat": 20.9674,  "lon": -89.5926},
     "Torreón, Coahuila":          {"lat": 25.5428,  "lon": -103.4068},
-    # Colombia
     "Bogotá":                     {"lat": 4.7110,   "lon": -74.0721},
     "Medellín, Antioquia":        {"lat": 6.2442,   "lon": -75.5812},
     "Cali, Valle":                {"lat": 3.4516,   "lon": -76.532},
-    # Argentina
     "Buenos Aires":               {"lat": -34.6037, "lon": -58.3816},
     "Córdoba":                    {"lat": -31.4201, "lon": -64.1888},
     "Rosario":                    {"lat": -32.9468, "lon": -60.6393},
-    # Perú
     "Lima":                       {"lat": -12.0464, "lon": -77.0428},
     "Arequipa":                   {"lat": -16.4090, "lon": -71.5375},
-    # Chile
     "Santiago":                   {"lat": -33.4489, "lon": -70.6693},
     "Valparaíso":                 {"lat": -33.0472, "lon": -71.6127},
-    # España
     "Madrid":                     {"lat": 40.4168,  "lon": -3.7038},
     "Barcelona":                  {"lat": 41.3851,  "lon": 2.1734},
     "Valencia":                   {"lat": 39.4699,  "lon": -0.3763},
 }
 
 
-def _detect_region(country_code: int, national_number: str) -> str | None:
+def _detect_region(country_code: int, national_number: str):
     prefixes = _REGIONS.get(country_code, {})
-    # Probar de más largo a más corto
     for length in (5, 4, 3, 2, 1):
         prefix = national_number[:length]
         if prefix in prefixes:
@@ -323,7 +320,7 @@ def _detect_region(country_code: int, national_number: str) -> str | None:
     return None
 
 
-def _region_coords(region: str) -> dict | None:
+def _region_coords(region: str):
     c = _REGION_COORDS.get(region)
     if c:
         return {**c, "map_url": f"https://www.google.com/maps?q={c['lat']},{c['lon']}"}
@@ -333,10 +330,7 @@ def _region_coords(region: str) -> dict | None:
 # ── Función principal ─────────────────────────────────────────────────────────
 
 def analyze_phone(number: str) -> dict:
-    """
-    Análisis completo de un número telefónico.
-    Retorna un dict rico en datos para ser formateado por ui/templates.py.
-    """
+    """Análisis completo de un número telefónico."""
     missing_keys = []
     if not RAPIDAPI_KEY:  missing_keys.append("RAPIDAPI_KEY")
     if not NUMVERIFY_KEY: missing_keys.append("NUMVERIFY_KEY")
@@ -357,7 +351,6 @@ def analyze_phone(number: str) -> dict:
     alpha       = phonenumbers.region_code_for_number(parsed)
     clean       = e164.replace("+", "")
 
-    # Metadatos básicos (librería phonenumbers — offline, muy fiable)
     country_name  = geocoder.description_for_number(parsed, "es") or "Desconocido"
     carrier_name  = carrier.name_for_number(parsed, "es") or ""
     time_zones    = timezone.time_zones_for_number(parsed)
@@ -370,7 +363,6 @@ def analyze_phone(number: str) -> dict:
     }
     line_type_str = _LINE_TYPES.get(ntype, "Desconocido")
 
-    # Enriquecimiento
     nv_data      = _numverify(e164)
     national_digits = re.sub(r'\D', '', national)
     tc_api       = _rapidapi_truecaller(re.sub(r'\D', '', national), alpha)
@@ -383,17 +375,15 @@ def analyze_phone(number: str) -> dict:
     carrier_ip   = _carrier_ip(carrier_name)
     carrier_geo  = get_ip_geolocation(carrier_ip) if carrier_ip else None
 
-    # Consolidar nombre de caller
     caller_name   = tc_api.get("name") or tc_web.get("name") or spam_data.get("name")
     caller_source = "Truecaller API" if tc_api.get("name") else \
                     "Truecaller Web"  if tc_web.get("name") else \
                     "SpamCalls DB"    if spam_data.get("name") else None
 
-    # Spam score consolidado
     spam_score_final = max(
         tc_api.get("spam_score", 0),
         spam_data.get("reports", 0),
-        (tellows_data.get("score") or 0) * 3,   # tellows 1-9 → escalar a ~30 max
+        (tellows_data.get("score") or 0) * 3,
     )
     is_reported = (
         tc_api.get("reported", False) or
@@ -402,7 +392,6 @@ def analyze_phone(number: str) -> dict:
         (tellows_data.get("score") or 0) >= 5
     )
 
-    # Análisis de riesgo local
     risk_flags = []
     if _is_voip_carrier(carrier_name):
         risk_flags.append("VOIP / Número Virtual")
@@ -425,7 +414,6 @@ def analyze_phone(number: str) -> dict:
     clean_q = requests.utils.quote(clean)
 
     return {
-        # Identificación
         "number":        e164,
         "national":      national,
         "international": intl,
@@ -433,22 +421,18 @@ def analyze_phone(number: str) -> dict:
         "country_code":  alpha,
         "missing_keys":  missing_keys,
 
-        # Operadora y tipo
         "carrier":       carrier_name or nv_data.get("carrier") or "Desconocido / Portado",
         "carrier_type":  "VOIP" if _is_voip_carrier(carrier_name) else "Convencional",
         "type":          nv_data.get("line_type") or line_type_str,
         "timezone":      ", ".join(time_zones) if time_zones else "No disponible",
 
-        # Validación
         "is_valid":    bool(nv_data.get("valid")) if nv_data else phonenumbers.is_valid_number(parsed),
         "is_possible": phonenumbers.is_possible_number(parsed),
 
-        # CallerID
         "caller_name":   caller_name,
         "caller_source": caller_source,
         "caller_type":   tc_api.get("name_type") or tc_api.get("line_type"),
 
-        # Spam / Reputación
         "spam": {
             "reported":     is_reported,
             "score":        spam_score_final,
@@ -459,20 +443,16 @@ def analyze_phone(number: str) -> dict:
             "total_reports": max(spam_data.get("reports", 0), tellows_data.get("reports", 0)),
         },
 
-        # Riesgo
         "risk_flags": risk_flags,
         "risk_level": "ALTO" if len(risk_flags) >= 2 else "MEDIO" if risk_flags else "BAJO",
 
-        # Geografía
         "country_data": country_data,
         "region":       region,
         "region_coords": region_c,
 
-        # Carrier geo (aproximada)
         "carrier_ip":  carrier_ip,
         "carrier_geo": carrier_geo if carrier_geo and "error" not in (carrier_geo or {}) else None,
 
-        # Links directos
         "whatsapp": f"https://wa.me/{cc}{parsed.national_number}",
         "telegram_search": f"https://www.google.com/search?q=site%3At.me+%22{clean_q}%22+OR+%22{e164_q}%22",
         "presence": {
@@ -486,7 +466,6 @@ def analyze_phone(number: str) -> dict:
             {"name": "X", "url": f"https://www.google.com/search?q=site%3Ax.com+%22{clean_q}%22+OR+%22{e164_q}%22"},
         ],
 
-        # Links OSINT externos
         "osint_links": [
             {"name": "Truecaller",  "url": f"https://www.truecaller.com/search/{alpha.lower()}/{national_digits}"},
             {"name": "GetContact",  "url": f"https://getcontact.com/en/number/{clean}"},

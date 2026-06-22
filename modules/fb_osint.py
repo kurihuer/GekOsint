@@ -212,25 +212,53 @@ async def resolve_fb_profile(identifier: str) -> dict:
         r'/(\d{8,17})/picture',
     ]
 
-    candidate_urls = [
-        f"https://mbasic.facebook.com/{identifier}",
-        f"https://m.facebook.com/{identifier}",
-        f"https://www.facebook.com/{identifier}",
-    ]
+    # ── Normalizar el input ───────────────────────────────────────────────
+    # Acepta: URL completa de FB, profile.php?id=NUM, /people/Nombre/NUM,
+    # @usuario, usuario o ID numérico puro.
+    ident = (identifier or "").strip()
+    forced_id = None
+    m = re.search(r'(?:facebook|fb)\.com/(?:profile\.php\?id=)?(\d{8,17})', ident)
+    if not m:
+        m = re.search(r'facebook\.com/people/[^/]+/(\d{8,17})', ident)
+    if m:
+        forced_id = m.group(1)
+    else:
+        um = re.search(r'(?:facebook|fb)\.com/([A-Za-z0-9.\-]+)', ident)
+        if um:
+            ident = um.group(1).split('?')[0]
+    ident = ident.lstrip('@').strip('/')
+    if re.match(r'^\d{8,17}$', ident):
+        forced_id = ident
+
+    if forced_id:
+        out["user_id"] = forced_id
+        path_variants = [f"profile.php?id={forced_id}"]
+    else:
+        path_variants = [ident]
+
+    # URLs: www (desktop, suele traer og:image) primero, luego m y mbasic.
+    candidate_urls = []
+    for p in path_variants:
+        candidate_urls += [
+            f"https://www.facebook.com/{p}",
+            f"https://m.facebook.com/{p}",
+            f"https://mbasic.facebook.com/{p}",
+        ]
 
     _proxy = {"proxy": PROXY_URL} if PROXY_URL else {}
     try:
         async with httpx.AsyncClient(
-            timeout=15.0, follow_redirects=True,
+            timeout=18.0, follow_redirects=True,
             cookies=_fb_cookies(),
             **_proxy,
         ) as client:
             for url in candidate_urls:
+                ua = UA_DESKTOP if "www.facebook" in url else UA_MOBILE
                 try:
                     r = await client.get(
                         url,
                         headers={
-                            "User-Agent":      UA_MOBILE,
+                            "User-Agent":      ua,
                             "Accept":          "text/html,application/xhtml+xml",
                             "Accept-Language": "en-US,en;q=0.9",
                         },
@@ -245,17 +273,13 @@ async def resolve_fb_profile(identifier: str) -> dict:
 
                 html = r.text or ""
 
-                # user_id
-                if identifier.isdigit() and 8 <= len(identifier) <= 17:
-                    out["user_id"] = identifier
-                else:
+                if not out["user_id"]:
                     for pat in id_patterns:
-                        m = re.search(pat, html)
-                        if m:
-                            out["user_id"] = m.group(1)
+                        mm = re.search(pat, html)
+                        if mm:
+                            out["user_id"] = mm.group(1)
                             break
 
-                # foto + nombre (de la misma página, sin requests extra)
                 pic = _extract_profile_pic(html)
                 if pic and not out["profile_pic"]:
                     out["profile_pic"] = pic
@@ -263,10 +287,12 @@ async def resolve_fb_profile(identifier: str) -> dict:
                 if name and not out["display_name"]:
                     out["display_name"] = name
 
-                if out["user_id"]:
+                # Tenemos ID y foto → listo. Si falta la foto, seguimos probando
+                # las otras URLs (mbasic/m) por si una la expone.
+                if out["user_id"] and out["profile_pic"]:
                     return out
 
-            if not out["user_id"]:
+            if not out["user_id"] and not out["profile_pic"]:
                 out["error"] = (
                     "User ID no encontrado (perfil privado, no existe, "
                     "o FB nos detectó como bot — renová cookies o revisá el proxy)"
