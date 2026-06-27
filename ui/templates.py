@@ -5,6 +5,7 @@ Cada función recibe un dict y retorna un string HTML listo para enviar.
 """
 
 import urllib.parse
+from config import STRICT_LINKS
 
 
 # ── Helpers de presentación ───────────────────────────────────────────────────
@@ -85,9 +86,25 @@ def format_ip_result(data: dict) -> str:
 
     txt += render_section("MAPA Y OSINT")
     txt += f"🗺️ <a href='{data['map_url']}'>Abrir en Google Maps</a>\n"
-    osint = data.get("osint_links", {})
-    if osint:
+    osint = data.get("osint_links", {}) or {}
+    if osint and not STRICT_LINKS:
         txt += " | ".join(f"<a href='{url}'>{name}</a>" for name, url in osint.items()) + "\n"
+    elif osint and STRICT_LINKS:
+        links = []
+        if data.get("open_ports") and data.get("open_ports") != ["Ninguno detectado"]:
+            if osint.get("Shodan"):
+                links.append(("Shodan", osint["Shodan"]))
+            if osint.get("Censys"):
+                links.append(("Censys", osint["Censys"]))
+        if data.get("blacklisted") or (data.get("abuse_reports", 0) or 0) > 0:
+            for k in ("VirusTotal", "AbuseIPDB", "IPVoid"):
+                if osint.get(k):
+                    links.append((k, osint[k]))
+        if any("GreyNoise" in str(x) for x in (data.get("risk_factors") or [])):
+            if osint.get("GreyNoise"):
+                links.append(("GreyNoise", osint["GreyNoise"]))
+        if links:
+            txt += " | ".join(f"<a href='{u}'>{n}</a>" for n, u in links) + "\n"
 
     return txt
 
@@ -212,21 +229,50 @@ def format_phone_result(data: dict) -> str:
 
     # ── Contacto directo ──────────────────────────────────────────────────
     txt += render_section("CONTACTO DIRECTO")
-    txt += f"<a href='{data.get('whatsapp', '#')}'>💬 WhatsApp</a>\n"
+    pres = data.get("presence", {}) or {}
+    if pres.get("whatsapp_registered") is True and data.get("whatsapp"):
+        txt += f"<a href='{data['whatsapp']}'>💬 WhatsApp</a>\n"
+    else:
+        txt += "<i>💬 WhatsApp: no disponible (no registrado o no verificable).</i>\n"
     if data.get("telegram_search"):
         txt += f"<a href='{data['telegram_search']}'>✈️ Telegram (búsqueda)</a>\n"
         txt += "<i>Nota: Telegram no permite abrir chat por número con un link público si el usuario no tiene username o lo tiene privado.</i>\n"
 
     # ── Links OSINT ───────────────────────────────────────────────────────
-    links = data.get("osint_links", [])
-    if links:
-        txt += render_section("VERIFICAR EN")
-        txt += " | ".join(f"<a href='{l['url']}'>{l['name']}</a>" for l in links) + "\n"
+    links = data.get("osint_links", []) or []
+    spam = data.get("spam", {}) or {}
+    caller_src = (data.get("caller_source") or "").lower()
+    verified_links = []
+    search_links = []
+    for l in links:
+        name = (l.get("name") or "").lower()
+        if name == "truecaller":
+            if "truecaller" in caller_src:
+                verified_links.append(l)
+        elif name == "spamcalls":
+            if (spam.get("total_reports", 0) or 0) > 0 or (spam.get("labels") or []):
+                verified_links.append(l)
+        elif name == "tellows":
+            if spam.get("tellows_score") is not None or spam.get("caller_type_tellows") or spam.get("reported"):
+                verified_links.append(l)
+        elif name == "google":
+            search_links.append(l)
 
-    socials = data.get("social_search_links", [])
-    if socials:
-        txt += render_section("BÚSQUEDA EN REDES (DORKS)")
-        txt += " | ".join(f"<a href='{l['url']}'>{l['name']}</a>" for l in socials) + "\n"
+    if verified_links:
+        txt += render_section("FUENTES CON EVIDENCIA")
+        txt += " | ".join(f"<a href='{l['url']}'>{l['name']}</a>" for l in verified_links) + "\n"
+    else:
+        txt += render_section("FUENTES CON EVIDENCIA")
+        txt += "<i>No hay fuentes con datos confirmados en esta consulta.</i>\n"
+
+    if not STRICT_LINKS:
+        socials = data.get("social_search_links", [])
+        if socials:
+            txt += render_section("BÚSQUEDA EN REDES (DORKS)")
+            txt += " | ".join(f"<a href='{l['url']}'>{l['name']}</a>" for l in socials) + "\n"
+        elif search_links:
+            txt += render_section("BÚSQUEDA")
+            txt += " | ".join(f"<a href='{l['url']}'>{l['name']}</a>" for l in search_links) + "\n"
 
     return txt
 
@@ -304,12 +350,13 @@ def format_username_result(username: str, found: list, telegram_data: dict = Non
         txt += render_section("REDES SOCIALES")
         txt += "Sin perfiles encontrados en esta búsqueda.\n"
 
-    txt += render_section("BÚSQUEDA AVANZADA")
-    q = username
-    txt += f"<a href='https://www.google.com/search?q=%22{q}%22'>Google</a>"
-    txt += f" | <a href='https://web.archive.org/web/*/https://*/{q}'>Wayback</a>"
-    txt += f" | <a href='https://whatsmyname.app/?q={q}'>WhatsMyName</a>"
-    txt += f" | <a href='https://namechk.com/'>Namechk</a>\n"
+    if not STRICT_LINKS:
+        txt += render_section("BÚSQUEDA AVANZADA")
+        q = username
+        txt += f"<a href='https://www.google.com/search?q=%22{q}%22'>Google</a>"
+        txt += f" | <a href='https://web.archive.org/web/*/https://*/{q}'>Wayback</a>"
+        txt += f" | <a href='https://whatsmyname.app/?q={q}'>WhatsMyName</a>"
+        txt += f" | <a href='https://namechk.com/'>Namechk</a>\n"
 
     return txt
 
@@ -372,14 +419,22 @@ def format_email_result(data: dict) -> str:
         txt += "✅ No encontrado en brechas conocidas\n"
 
     links = data.get("links", {})
-    txt += render_section("VERIFICAR EN")
-    _link_labels = {
-        "haveibeenpwned": "HIBP", "intelx": "IntelX",
-        "dehashed": "DeHashed", "emailrep": "EmailRep",
-        "hunter": "Hunter", "google_dork": "Google",
-    }
-    parts = [f"<a href='{links[k]}'>{v}</a>" for k, v in _link_labels.items() if links.get(k)]
-    txt += " | ".join(parts) + "\n"
+    show = []
+    if breaches or data.get("leaked"):
+        for k, v in (("haveibeenpwned", "HIBP"), ("intelx", "IntelX"), ("dehashed", "DeHashed"), ("psbdmp", "PSBDMP")):
+            if links.get(k):
+                show.append((v, links[k]))
+    if data.get("suspicious") or data.get("disposable") or rep in ("LOW", "MEDIUM"):
+        if links.get("emailrep"):
+            show.append(("EmailRep", links["emailrep"]))
+    if not STRICT_LINKS:
+        if links.get("hunter"):
+            show.append(("Hunter", links["hunter"]))
+        if links.get("google_dork"):
+            show.append(("Google", links["google_dork"]))
+    if show:
+        txt += render_section("FUENTES CON EVIDENCIA")
+        txt += " | ".join(f"<a href='{u}'>{n}</a>" for n, u in show) + "\n"
 
     return txt
 
@@ -533,20 +588,38 @@ def format_whatsapp_result(data: dict) -> str:
         txt += "✅ Sin reportes de spam\n"
 
     txt += render_section("CONTACTO DIRECTO")
-    txt += f"<a href='{data['wa_link']}'>Abrir perfil</a> | "
-    txt += f"<a href='{data['wa_msg']}'>Enviar mensaje</a>\n"
-    if data.get("tg_search"):
+    if reg is True:
+        txt += f"<a href='{data['wa_link']}'>Abrir perfil</a> | "
+        txt += f"<a href='{data['wa_msg']}'>Enviar mensaje</a>\n"
+    else:
+        txt += "<i>Link directo no disponible (no registrado o no verificable).</i>\n"
+    if data.get("tg_search") and not STRICT_LINKS:
         txt += f"<a href='{data['tg_search']}'>Telegram (búsqueda)</a>\n"
 
     links = data.get("links", {})
-    _lmap = {
-        "truecaller": "Truecaller", "getcontact": "GetContact",
-        "syncme": "Sync.me", "numbway": "Numbway",
-        "tellows": "Tellows", "google_dork": "Google",
-    }
-    txt += render_section("VERIFICAR EN")
-    parts = [f"<a href='{links[k]}'>{v}</a>" for k, v in _lmap.items() if links.get(k)]
-    txt += " | ".join(parts) + "\n"
+    src = (data.get("caller_source") or "").lower()
+    spam_sources = (spam.get("sources") or [])
+
+    txt += render_section("FUENTES CON EVIDENCIA")
+    parts = []
+    if "truecaller" in src and links.get("truecaller"):
+        parts.append(f"<a href='{links['truecaller']}'>Truecaller</a>")
+    if "numbway" in src and links.get("numbway"):
+        parts.append(f"<a href='{links['numbway']}'>Numbway</a>")
+    if (total or 0) > 0 and links.get("spamcalls"):
+        parts.append(f"<a href='{links['spamcalls']}'>SpamCalls</a>")
+    if any("whocalledme" in s.lower() for s in spam_sources) and links.get("whocalledme"):
+        parts.append(f"<a href='{links['whocalledme']}'>WhoCalledMe</a>")
+    if any("tellows" in s.lower() for s in spam_sources) and links.get("tellows"):
+        parts.append(f"<a href='{links['tellows']}'>Tellows</a>")
+    if parts:
+        txt += " | ".join(parts) + "\n"
+    else:
+        txt += "<i>No hay fuentes con datos confirmados en esta consulta.</i>\n"
+
+    if links.get("google_dork") and not STRICT_LINKS:
+        txt += render_section("BÚSQUEDA")
+        txt += f"<a href='{links['google_dork']}'>Google</a>\n"
 
     return txt
 
@@ -594,15 +667,16 @@ def format_dns_result(data: dict) -> str:
         if whois.get("status"):
             txt += f"🛡️ <b>Estado:</b> {str(whois['status'])[:60]}\n"
 
-    d = data["domain"]
-    txt += render_section("OSINT LINKS")
-    txt += (
-        f"<a href='https://who.is/whois/{d}'>WHOIS</a> | "
-        f"<a href='https://securitytrails.com/domain/{d}'>SecurityTrails</a> | "
-        f"<a href='https://censys.io/ipv4?q={d}'>Censys</a> | "
-        f"<a href='https://viewdns.info/iphistory/?domain={d}'>IP History</a> | "
-        f"<a href='https://www.shodan.io/search?query={d}'>Shodan</a>\n"
-    )
+    if not STRICT_LINKS:
+        d = data["domain"]
+        txt += render_section("OSINT LINKS")
+        txt += (
+            f"<a href='https://who.is/whois/{d}'>WHOIS</a> | "
+            f"<a href='https://securitytrails.com/domain/{d}'>SecurityTrails</a> | "
+            f"<a href='https://censys.io/ipv4?q={d}'>Censys</a> | "
+            f"<a href='https://viewdns.info/iphistory/?domain={d}'>IP History</a> | "
+            f"<a href='https://www.shodan.io/search?query={d}'>Shodan</a>\n"
+        )
 
     return txt
 
@@ -638,12 +712,13 @@ def format_people_result(data: dict) -> str:
     else:
         txt += render_section("PERFILES SOCIALES")
         txt += "Sin perfiles encontrados con las variantes generadas.\n"
-        cands = data.get("candidate_profiles", [])
-        if cands:
-            txt += render_section("POSIBLES USERNAMES (NO VERIFICADOS)")
-            for p in cands[:10]:
-                txt += f"🔗 <b>{p['site']}</b> — @{p['username']}\n"
-                txt += f"   <a href='{p['url']}'>{p['url']}</a>\n"
+        if not STRICT_LINKS:
+            cands = data.get("candidate_profiles", [])
+            if cands:
+                txt += render_section("POSIBLES USERNAMES (NO VERIFICADOS)")
+                for p in cands[:10]:
+                    txt += f"🔗 <b>{p['site']}</b> — @{p['username']}\n"
+                    txt += f"   <a href='{p['url']}'>{p['url']}</a>\n"
 
     li = data.get("linkedin", {})
     if li.get("found"):
@@ -651,17 +726,18 @@ def format_people_result(data: dict) -> str:
         for url in li.get("profiles", [])[:3]:
             txt += f"🔗 <a href='{url}'>{url}</a>\n"
 
-    dorks = data.get("dorks", {})
-    if dorks:
-        txt += render_section("BÚSQUEDAS RECOMENDADAS")
-        for label, url in list(dorks.items())[:10]:
-            txt += f"🔎 <a href='{url}'>{label}</a>\n"
+    if not STRICT_LINKS:
+        dorks = data.get("dorks", {})
+        if dorks:
+            txt += render_section("BÚSQUEDAS RECOMENDADAS")
+            for label, url in list(dorks.items())[:10]:
+                txt += f"🔎 <a href='{url}'>{label}</a>\n"
 
-    osint = data.get("osint_links", {})
-    if osint:
-        txt += render_section("BASES DE DATOS OSINT")
-        for site, url in list(osint.items())[:10]:
-            txt += f"📋 <a href='{url}'>{site}</a>\n"
+        osint = data.get("osint_links", {})
+        if osint:
+            txt += render_section("BASES DE DATOS OSINT")
+            for site, url in list(osint.items())[:10]:
+                txt += f"📋 <a href='{url}'>{site}</a>\n"
 
     txt += "\n<i>⚠️ Uso exclusivamente para investigación ética y legal.</i>"
     return txt
@@ -1212,17 +1288,21 @@ def format_tiktok_osint(data: dict) -> str:
         url = f"https://www.tiktok.com/@{username}"
         blocked = data.get("_blocked", False)
         if blocked:
-            google = f"https://www.google.com/search?q=tiktok+{username}"
-            return (
+            base = (
                 f"{render_header('TIKTOK OSINT')}"
                 f"<b>@{username}</b>\n\n"
                 f"TikTok bloquea IPs de servidor. No se pueden obtener datos automaticamente.\n\n"
                 f"<b>Ver perfil completo:</b>\n"
                 f"<a href='{url}'>{url}</a>\n\n"
-                f"<b>Buscar en Google:</b>\n"
-                f"<a href='{google}'>tiktok {username}</a>\n\n"
                 f"<i>Abre el link — el perfil carga completo en tu navegador.</i>"
             )
+            if not STRICT_LINKS:
+                google = f"https://www.google.com/search?q=tiktok+{username}"
+                base += (
+                    f"\n\n<b>Buscar en Google:</b>\n"
+                    f"<a href='{google}'>tiktok {username}</a>"
+                )
+            return base
         return (
             "<b>TikTok OSINT</b>\n\n"
             + str(data["error"])
@@ -1244,6 +1324,8 @@ def format_tiktok_osint(data: dict) -> str:
     if uid:
         out.append(f"<b>User ID:</b> <code>{uid}</code>")
     out.append(f"Perfil: https://www.tiktok.com/@{username}")
+    if data.get("avatar_url"):
+        out.append(f"🖼️ <a href='{data['avatar_url']}'>Avatar (HD)</a>")
     out.append("")
 
     bio = (data.get("bio") or "").strip()
@@ -1254,11 +1336,28 @@ def format_tiktok_osint(data: dict) -> str:
         out.append(f"<b>Link en bio:</b> <code>{data['bio_link']}</code>")
     out.append("")
 
+    exposure = data.get("exposure") or {}
+    if any(exposure.get(k) for k in ("emails", "phones", "urls", "handles")):
+        out.append(render_section("SEÑALES DE EXPOSICIÓN"))
+        if exposure.get("emails"):
+            out.append("📧 <b>Emails:</b> " + " | ".join(f"<code>{e}</code>" for e in exposure["emails"]))
+        if exposure.get("phones"):
+            out.append("📱 <b>Teléfonos:</b> " + " | ".join(f"<code>{p}</code>" for p in exposure["phones"]))
+        if exposure.get("handles"):
+            out.append("🏷️ <b>Handles:</b> " + " | ".join(f"@{h}" for h in exposure["handles"]))
+        if exposure.get("urls"):
+            out.append("🔗 <b>URLs:</b> " + " | ".join(f"<a href='{u}'>link</a>" for u in exposure["urls"][:4]))
+        out.append("<i>Esto suele usarse para ingeniería social (phishing dirigido y suplantación).</i>")
+        out.append("")
+
     out.append(render_section("ESTADISTICAS"))
-    out.append(f"<b>Seguidores:</b>    {data.get('followers','?')}")
-    out.append(f"<b>Siguiendo:</b>     {data.get('following','?')}")
-    out.append(f"<b>Likes totales:</b> {data.get('total_likes','?')}")
-    out.append(f"<b>Videos:</b>        {data.get('video_count','?')}")
+    if data.get("followers") is None and data.get("following") is None:
+        out.append("<i>No disponible (bloqueo por IP o perfil privado).</i>")
+    else:
+        out.append(f"<b>Seguidores:</b>    {data.get('followers','?')}")
+        out.append(f"<b>Siguiendo:</b>     {data.get('following','?')}")
+        out.append(f"<b>Likes totales:</b> {data.get('total_likes','?')}")
+        out.append(f"<b>Videos:</b>        {data.get('video_count','?')}")
 
     eng = data.get("engagement_est")
     if eng:
@@ -1298,9 +1397,14 @@ def format_tiktok_osint(data: dict) -> str:
     src  = data.get("_source","")
     if note:
         out.append(f"<i>{note}</i>")
-    if src == "html_regex":
-        out.append("<i>Datos parciales - scraping limitado por TikTok.</i>")
-    elif src == "rapidapi":
-        out.append("<i>Datos obtenidos via RapidAPI.</i>")
+    if src:
+        if src in ("html_regex", "og_meta"):
+            out.append("<i>Datos parciales - TikTok limitó la extracción desde esta IP.</i>")
+        elif src.startswith("tikwm:"):
+            out.append("<i>Datos obtenidos vía RapidAPI (TikWM).</i>")
+        elif src == "tiktok_internal_api":
+            out.append("<i>Datos obtenidos vía API interna web.</i>")
+        elif src in ("universal_json", "sigi_state"):
+            out.append("<i>Datos obtenidos del JSON embebido en la web.</i>")
 
     return "\n".join(out)
