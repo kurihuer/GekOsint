@@ -26,6 +26,7 @@ import logging
 import os
 import re
 import time
+import urllib.parse
 from collections import defaultdict, deque
 
 import httpx
@@ -185,6 +186,29 @@ def _extract_display_name(html: str) -> str | None:
             ):
                 return name.replace("&amp;", "&")
     return None
+
+
+def _build_manual_search_links(query: str, input_type: str) -> dict:
+    text = (query or "").strip()
+    encoded = urllib.parse.quote_plus(text)
+    quoted = urllib.parse.quote_plus(f'"{text}"')
+    links = {
+        "google": f"https://www.google.com/search?q=site%3Afacebook.com+{quoted}",
+        "facebook_search": f"https://www.facebook.com/search/top/?q={encoded}",
+    }
+    if input_type == "phone":
+        normalized = re.sub(r"\D", "", text)
+        links["google_phone"] = (
+            "https://www.google.com/search?q="
+            + urllib.parse.quote_plus(f'site:facebook.com "{text}" OR "{normalized}"')
+        )
+    elif input_type == "email":
+        local_part = text.split("@", 1)[0]
+        links["google_email"] = (
+            "https://www.google.com/search?q="
+            + urllib.parse.quote_plus(f'site:facebook.com "{text}" OR "{local_part}"')
+        )
+    return links
 
 
 # ── Conversión username/ID → datos públicos del perfil (findmyfbid) ───────────
@@ -427,6 +451,8 @@ async def fb_lookup(query: str) -> dict:
         "profile_pic_urls": [],
         "recovery":         None,
         "session":          "authenticated" if _has_fb_cookies() else "anonymous",
+        "notes":            [],
+        "search_links":     {},
         "errors":           [],
     }
 
@@ -445,6 +471,7 @@ async def fb_lookup(query: str) -> dict:
         out["input_type"] = "phone"
     else:
         out["input_type"] = "username"
+    out["search_links"] = _build_manual_search_links(query, out["input_type"])
 
     # 1) username o user_id → resolver perfil (ID + foto CDN + nombre)
     if out["input_type"] in ("username", "user_id"):
@@ -489,5 +516,13 @@ async def fb_lookup(query: str) -> dict:
     if out["user_id"]:
         out["profile_pic_urls"] = fb_profile_picture_urls(out["user_id"])
         out["found"] = True
+
+    if not out["found"] and out["input_type"] in ("phone", "email"):
+        out["notes"].append(
+            "Meta ya no permite verificar de forma fiable perfiles por teléfono o email desde este flujo."
+        )
+        out["notes"].append(
+            "Este resultado no demuestra que la cuenta no exista; solo indica que Facebook no devolvió datos públicos reutilizables al bot."
+        )
 
     return out

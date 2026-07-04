@@ -1125,7 +1125,35 @@ def format_fb_osint(data: dict) -> str:
     if not data.get("found"):
         for e in data.get("errors", []):
             out.append(f"⚠️ {e}")
-        if not data.get("errors"):
+        notes = data.get("notes") or []
+        if inp_type in ("phone", "email"):
+            out.append("⚠️ <b>No se pudo confirmar la cuenta con este tipo de input.</b>")
+            out.append(
+                "   <i>Facebook ya no expone de forma fiable el lookup directo por "
+                "teléfono/email ni los recovery hints en HTML.</i>"
+            )
+            for note in notes:
+                out.append(f"   • {note}")
+            links = data.get("search_links") or {}
+            manual = []
+            if links.get("facebook_search"):
+                manual.append(f"<a href='{links['facebook_search']}'>Buscar en Facebook</a>")
+            if links.get("google_phone"):
+                manual.append(f"<a href='{links['google_phone']}'>Google por número</a>")
+            elif links.get("google_email"):
+                manual.append(f"<a href='{links['google_email']}'>Google por email</a>")
+            elif links.get("google"):
+                manual.append(f"<a href='{links['google']}'>Google site:facebook</a>")
+            if manual:
+                out.append("")
+                out.append("🔎 <b>Verificación manual</b>")
+                out.append(" | ".join(manual))
+            out.append("")
+            out.append(
+                "💡 <b>Mejor pivot:</b> usá el nombre o username derivado para "
+                "reintentar Facebook, Instagram y People Search."
+            )
+        elif not data.get("errors"):
             out.append("❌ Cuenta no encontrada o sin datos públicos.")
         return "\n".join(out)
 
@@ -1192,6 +1220,8 @@ def format_fb_osint(data: dict) -> str:
     for e in data.get("errors", []):
         if e:
             out.append(f"<i>⚠️ {e}</i>")
+    for note in data.get("notes", []):
+        out.append(f"<i>ℹ️ {note}</i>")
 
     return "\n".join(out)
 
