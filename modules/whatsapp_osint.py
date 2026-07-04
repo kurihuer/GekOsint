@@ -12,6 +12,7 @@ Mejoras v6.2:
 
 import requests
 import re
+import urllib.parse
 import phonenumbers
 from phonenumbers import geocoder, carrier as ph_carrier
 from config import logger, RAPIDAPI_KEY
@@ -31,6 +32,17 @@ HEADERS = {
 
 _CACHE = {}
 _TTL = 600
+
+_SOCIAL_HOSTS = {
+    "facebook.com": "Facebook",
+    "instagram.com": "Instagram",
+    "tiktok.com": "TikTok",
+    "x.com": "X",
+    "twitter.com": "X",
+    "linkedin.com": "LinkedIn",
+    "github.com": "GitHub",
+    "t.me": "Telegram",
+}
 
 
 def check_wa_registered(clean):
@@ -146,7 +158,136 @@ def check_wa_business(clean):
 
 
 def get_social_presence(clean, e164):
-    return {}
+    direct_tg = f"https://t.me/+{clean}"
+    return {
+        "telegram": {
+            "phone_link": direct_tg,
+            "note": (
+                "Telegram puede abrir chat por número solo si la cuenta permite ser "
+                "encontrada con su teléfono."
+            ),
+        }
+    }
+
+
+def _append_unique(items, value):
+    value = (value or "").strip()
+    if value and value not in items:
+        items.append(value)
+
+
+def _collect_truecaller_hints(data, clean):
+    emails = []
+    phones = []
+    social_profiles = []
+    photos = []
+    seen_social = set()
+
+    def walk(node, key_hint=""):
+        if isinstance(node, dict):
+            for key, value in node.items():
+                walk(value, str(key).lower())
+            return
+        if isinstance(node, list):
+            for value in node:
+                walk(value, key_hint)
+            return
+        if not isinstance(node, str):
+            return
+
+        text = node.strip()
+        if not text:
+            return
+
+        for email in re.findall(
+            r"\b[A-Za-z0-9._%+\-]{1,64}(?:\*+[A-Za-z0-9._%+\-]{0,32})?@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b",
+            text,
+        ):
+            _append_unique(emails, email)
+
+        for phone in re.findall(
+            r"(?:\+?\d[\d\-\s()]{0,6}\*{2,}[\d\-\s()*]{0,12}\d{1,4}|\b\d{2,4}\*{2,}\d{1,4}\b)",
+            text,
+        ):
+            normalized = phone.strip()
+            if normalized and normalized != clean:
+                _append_unique(phones, normalized)
+
+        for url in re.findall(r"https?://[^\s<>'\"]+", text):
+            clean_url = url.rstrip(").,]}")
+            low = clean_url.lower()
+            matched = None
+            for host, site in _SOCIAL_HOSTS.items():
+                if host in low:
+                    matched = site
+                    break
+            if matched:
+                pair = (matched, clean_url)
+                if pair not in seen_social:
+                    seen_social.add(pair)
+                    social_profiles.append({"site": matched, "url": clean_url})
+            if any(k in key_hint for k in ("photo", "image", "avatar", "picture")):
+                _append_unique(photos, clean_url)
+
+        if any(k in key_hint for k in ("photo", "image", "avatar", "picture")) and text.startswith("http"):
+            _append_unique(photos, text)
+
+    walk(data)
+
+    telegram = None
+    for profile in social_profiles:
+        if profile["site"] == "Telegram":
+            username = profile["url"].rstrip("/").split("/")[-1].lstrip("@+")
+            telegram = {
+                "username": username if username and username != clean else None,
+                "url": profile["url"],
+                "deep_link": f"tg://resolve?domain={username}" if username and username != clean else None,
+            }
+            break
+
+    return {
+        "emails": emails[:5],
+        "phones": phones[:5],
+        "social_profiles": social_profiles[:8],
+        "photo": photos[0] if photos else None,
+        "telegram": telegram,
+    }
+
+
+def _rapidapi_truecaller_enrich(national_number, country_code_alpha, clean):
+    if not RAPIDAPI_KEY:
+        return {}
+    try:
+        r = requests.post(
+            "https://truecaller-api3.p.rapidapi.com/v2.php",
+            headers={
+                "Content-Type": "application/x-www-form-urlencoded",
+                "x-rapidapi-host": "truecaller-api3.p.rapidapi.com",
+                "x-rapidapi-key": RAPIDAPI_KEY,
+            },
+            data={"phone": national_number, "countryCode": country_code_alpha},
+            timeout=14,
+        )
+        if r.status_code != 200:
+            return {"http_status": r.status_code}
+        data = r.json()
+        tc = data.get("truecaller_lookup") or data
+        hints = _collect_truecaller_hints(tc, clean)
+        return {
+            "name": tc.get("name") or tc.get("caller_name") or tc.get("callerName"),
+            "name_type": tc.get("name_type") or tc.get("nameType"),
+            "carrier": tc.get("carrier") or tc.get("carrier_name"),
+            "line_type": tc.get("line_type") or tc.get("lineType"),
+            "spam_type": tc.get("spam_type") or tc.get("spamType"),
+            "photo": hints.get("photo"),
+            "emails": hints.get("emails", []),
+            "phones": hints.get("phones", []),
+            "social_profiles": hints.get("social_profiles", []),
+            "telegram": hints.get("telegram"),
+        }
+    except Exception as e:
+        logger.debug(f"RapidAPI WA enrich: {e}")
+        return {}
 
 
 def _get_caller_name(clean, country_code_alpha, national_number):
@@ -242,52 +383,114 @@ def analyze_whatsapp(number):
         if cached and now - cached[0] <= _TTL:
             return cached[1]
 
-        registered = check_wa_registered(clean)
-        spam = check_spam_reports(clean)
+        phone_intel = {}
+        try:
+            from modules.phone_lookup import analyze_phone
+            phone_intel = analyze_phone(e164) or {}
+        except Exception as e:
+            logger.debug(f"WA fallback phone_intel: {e}")
+
+        registered = (
+            ((phone_intel.get("presence") or {}).get("whatsapp_registered"))
+            if isinstance(phone_intel, dict) else None
+        )
+        if registered is None:
+            registered = check_wa_registered(clean)
+
+        spam = (
+            (phone_intel.get("spam") if isinstance(phone_intel, dict) else None)
+            or check_spam_reports(clean)
+        )
         photo = get_wa_profile_photo(clean)
         is_business = check_wa_business(clean)
         social = get_social_presence(clean, e164)
+        tc_enrich = _rapidapi_truecaller_enrich(national_digits, region_code or "", clean)
 
-        caller_name, caller_source = _get_caller_name(clean, region_code or "", national_digits)
+        caller_name = (
+            tc_enrich.get("name")
+            or (phone_intel.get("caller_name") if isinstance(phone_intel, dict) else None)
+        )
+        caller_source = (
+            "Truecaller API"
+            if tc_enrich.get("name")
+            else (phone_intel.get("caller_source") if isinstance(phone_intel, dict) else None)
+        )
+        if not caller_name:
+            caller_name, caller_source = _get_caller_name(clean, region_code or "", national_digits)
 
         if registered is None:
             if caller_name or spam.get("total_reports", 0) > 0:
                 registered = True
+
+        spam_sources = []
+        if isinstance(spam, dict):
+            existing_sources = spam.get("sources") or []
+            if isinstance(existing_sources, list):
+                spam_sources.extend(existing_sources)
+            if spam.get("tellows_score"):
+                _append_unique(spam_sources, f"Tellows ({spam['tellows_score']}/9)")
+            if tc_enrich.get("spam_type"):
+                _append_unique(spam_sources, f"Truecaller ({tc_enrich['spam_type']})")
+            spam["sources"] = spam_sources[:5]
+
+        telegram = (social.get("telegram") or {}).copy() if isinstance(social, dict) else {}
+        if tc_enrich.get("telegram"):
+            telegram.update({k: v for k, v in tc_enrich["telegram"].items() if v})
+        telegram.setdefault("phone_link", f"https://t.me/+{clean}")
+        telegram.setdefault(
+            "search_link",
+            f"https://www.google.com/search?q=site%3At.me+%22{urllib.parse.quote(clean)}%22+OR+%22{urllib.parse.quote(e164)}%22",
+        )
+        social["telegram"] = telegram
+
+        social_profiles = tc_enrich.get("social_profiles", [])
+        social_profiles = [p for p in social_profiles if p.get("site") != "Telegram"]
 
         result = {
             "number":       e164,
             "national":     national,
             "international": intl,
             "clean":        clean,
-            "country":      country,
+            "country":      phone_intel.get("country") if isinstance(phone_intel, dict) and phone_intel.get("country") else country,
             "country_code": country_code,
             "region_code":  region_code,
-            "carrier":      operador,
+            "carrier":      phone_intel.get("carrier") if isinstance(phone_intel, dict) and phone_intel.get("carrier") else operador,
             "registered":   registered,
             "is_business":  is_business,
-            "photo":        photo,
+            "photo":        photo or tc_enrich.get("photo"),
             "caller_name":  caller_name,
             "caller_source": caller_source,
             "about":        None,
             "spam":         spam,
             "social":       social,
+            "risk_level":   phone_intel.get("risk_level") if isinstance(phone_intel, dict) else None,
+            "risk_flags":   phone_intel.get("risk_flags") if isinstance(phone_intel, dict) else [],
+            "type":         phone_intel.get("type") if isinstance(phone_intel, dict) else None,
+            "timezone":     phone_intel.get("timezone") if isinstance(phone_intel, dict) else None,
+            "region":       phone_intel.get("region") if isinstance(phone_intel, dict) else None,
+            "country_data": phone_intel.get("country_data") if isinstance(phone_intel, dict) else None,
+            "emails_hints": tc_enrich.get("emails", []),
+            "phones_hints": tc_enrich.get("phones", []),
+            "social_profiles": social_profiles,
             "wa_link":      f"https://wa.me/{clean}",
             "wa_msg":       f"https://api.whatsapp.com/send?phone={clean}",
-            "tg_search":    f"https://www.google.com/search?q=site%3At.me+%22{requests.utils.quote(clean)}%22+OR+%22{requests.utils.quote(e164)}%22",
+            "tg_search":    telegram.get("search_link"),
+            "tg_direct":    telegram.get("phone_link"),
             "links": {
-                "truecaller":  f"https://www.truecaller.com/search/{(region_code or 'global').lower()}/{clean}",
-                "getcontact":  f"https://getcontact.com/en/number/{clean}",
-                "syncme":      f"https://www.sync.me/search/?number={e164}",
+                "truecaller":  f"https://www.truecaller.com/search/{(region_code or 'global').lower()}/{national_digits}",
+                "syncme":      f"https://www.sync.me/search/?number=%2B{clean}",
                 "spamcalls":   f"https://spamcalls.net/en/number/{clean}",
-                "whocalledme": f"https://whocalledme.com/PhoneNumber/{clean}",
+                "whocalledme": f"https://whocalledme.com/Phone-Number.aspx/{clean}",
                 "tellows":     f"https://www.tellows.com/num/{clean}",
-                "numbway":     f"https://numbway.com/phone/{clean}",
                 "google_dork": f"https://www.google.com/search?q=%22{e164}%22+OR+%22{clean}%22",
+                "facebook_dork": f"https://www.google.com/search?q=site%3Afacebook.com+%22{clean}%22+OR+%22{e164}%22",
+                "instagram_dork": f"https://www.google.com/search?q=site%3Ainstagram.com+%22{clean}%22+OR+%22{e164}%22",
+                "tiktok_dork": f"https://www.google.com/search?q=site%3Atiktok.com+%22{clean}%22+OR+%22{e164}%22",
             }
         }
         result["business"] = is_business
         result["name"] = caller_name
-        result["profile_picture"] = photo
+        result["profile_picture"] = result["photo"]
         result["missing_keys"] = missing_keys
         _CACHE[ck] = (now, result)
         return result

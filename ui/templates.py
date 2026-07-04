@@ -531,8 +531,18 @@ def format_whatsapp_result(data: dict) -> str:
     if data.get("business") or data.get("is_business"):
         txt += "🏢 <b>Cuenta Business detectada</b>\n"
 
+    if data.get("type") or data.get("timezone") or data.get("risk_level"):
+        txt += render_section("IDENTIFICACIÓN")
+        if data.get("type"):
+            txt += f"📱 <b>Tipo de línea:</b> {data['type']}\n"
+        if data.get("timezone"):
+            txt += f"🕐 <b>Zona horaria:</b> {data['timezone']}\n"
+        if data.get("risk_level"):
+            txt += f"⚠️ <b>Riesgo:</b> {data['risk_level']}\n"
+
     name = data.get("name") or data.get("caller_name")
     if name:
+        txt += render_section("CALLER ID")
         txt += f"👤 <b>Nombre:</b> {name}\n"
         src = data.get("caller_source")
         if src:
@@ -544,6 +554,8 @@ def format_whatsapp_result(data: dict) -> str:
             txt += f"🌍 <b>Región/País:</b> {data.get('country')}\n"
         if data.get("carrier"):
             txt += f"📡 <b>Operadora:</b> {data.get('carrier')}\n"
+        if data.get("region"):
+            txt += f"🗺️ <b>Región/Lada:</b> {data.get('region')}\n"
 
     photo = data.get("profile_picture") or data.get("photo")
     if photo:
@@ -566,22 +578,66 @@ def format_whatsapp_result(data: dict) -> str:
             txt += f"🏷️ <b>Etiquetas:</b> {', '.join(spam['labels'])}\n"
     else:
         txt += "✅ Sin reportes de spam\n"
+    if spam.get("sources"):
+        txt += f"📚 <b>Fuentes:</b> {', '.join(spam['sources'][:4])}\n"
 
     txt += render_section("CONTACTO DIRECTO")
     txt += f"<a href='{data['wa_link']}'>Abrir perfil</a> | "
     txt += f"<a href='{data['wa_msg']}'>Enviar mensaje</a>\n"
+    telegram = (data.get("social") or {}).get("telegram") or {}
+    if telegram.get("url") and telegram.get("username"):
+        txt += (
+            f"<a href='{telegram['url']}'>Telegram directo</a> | "
+            f"<a href='{telegram.get('deep_link', telegram['url'])}'>Abrir app Telegram</a>\n"
+        )
+    elif data.get("tg_direct"):
+        txt += f"<a href='{data['tg_direct']}'>Telegram por número</a>\n"
+        if telegram.get("note"):
+            txt += f"<i>{telegram['note']}</i>\n"
     if data.get("tg_search"):
         txt += f"<a href='{data['tg_search']}'>Telegram (búsqueda)</a>\n"
 
+    if data.get("emails_hints") or data.get("phones_hints") or data.get("social_profiles"):
+        txt += render_section("PISTAS RELACIONADAS")
+        if data.get("emails_hints"):
+            txt += "📧 <b>Emails asociados:</b> " + " | ".join(
+                f"<code>{e}</code>" for e in data["emails_hints"][:4]
+            ) + "\n"
+        if data.get("phones_hints"):
+            txt += "📱 <b>Phones asociados:</b> " + " | ".join(
+                f"<code>{p}</code>" for p in data["phones_hints"][:4]
+            ) + "\n"
+        if data.get("social_profiles"):
+            txt += "🌐 <b>Redes/perfiles:</b> " + " | ".join(
+                f"<a href='{p['url']}'>{p['site']}</a>" for p in data["social_profiles"][:5]
+            ) + "\n"
+
+    if data.get("risk_flags"):
+        txt += render_section("EVALUACIÓN")
+        for flag in data["risk_flags"][:4]:
+            txt += f"⚠️ {flag}\n"
+
     links = data.get("links", {})
     _lmap = {
-        "truecaller": "Truecaller", "getcontact": "GetContact",
-        "syncme": "Sync.me", "numbway": "Numbway",
+        "truecaller": "Truecaller", "syncme": "Sync.me",
+        "spamcalls": "SpamCalls", "whocalledme": "WhoCalledMe",
         "tellows": "Tellows", "google_dork": "Google",
     }
     txt += render_section("VERIFICAR EN")
     parts = [f"<a href='{links[k]}'>{v}</a>" for k, v in _lmap.items() if links.get(k)]
     txt += " | ".join(parts) + "\n"
+
+    social_parts = []
+    for key, label in (
+        ("facebook_dork", "Facebook"),
+        ("instagram_dork", "Instagram"),
+        ("tiktok_dork", "TikTok"),
+    ):
+        if links.get(key):
+            social_parts.append(f"<a href='{links[key]}'>{label}</a>")
+    if social_parts:
+        txt += render_section("BÚSQUEDA EN REDES")
+        txt += " | ".join(social_parts) + "\n"
 
     return txt
 
