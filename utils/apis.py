@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 def generate_text_report(title, data_str):
     """Genera un reporte en texto plano formateado"""
-    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     report = (
         f"{'='*50}\n"
         f" GEKOSINT OSINT REPORT - {title}\n"
@@ -517,6 +517,47 @@ def generate_pdf_report(title: str, data: dict, input_text: str = "") -> bytes:
         from reportlab.pdfbase import pdfmetrics
         from reportlab.pdfbase.ttfonts import TTFont
         
+        def normalize_report_payload(report_data: dict) -> tuple[dict, str]:
+            if not isinstance(report_data, dict):
+                return {}, input_text or ""
+
+            if any(k in report_data for k in (
+                "ip_lookup", "phone_intel", "email_analysis", "email_recon",
+                "gmail_osint", "fb_osint", "username_search", "github_recon",
+                "people_search", "dns_lookup", "tiktok_osint", "whatsapp_osint",
+            )):
+                return report_data, input_text or report_data.get("input", "")
+
+            target = input_text or report_data.get("input", "")
+            mode = report_data.get("mode", "")
+
+            if mode == "menu_universal":
+                payload = report_data.get("universal_results") or report_data.get("data") or {}
+                return payload, target
+
+            raw = report_data.get("data")
+            if not isinstance(raw, dict):
+                return {}, target
+
+            mode_map = {
+                "menu_ip": "ip_lookup",
+                "menu_phone": "phone_intel",
+                "menu_email": "email_analysis",
+                "menu_emailrecon": "email_recon",
+                "menu_gmail": "gmail_osint",
+                "menu_fb": "fb_osint",
+                "menu_user": "username_search",
+                "menu_github": "github_recon",
+                "menu_people": "people_search",
+                "menu_dns": "dns_lookup",
+                "menu_tiktok": "tiktok_osint",
+                "menu_wa": "whatsapp_osint",
+            }
+            key = mode_map.get(mode)
+            return ({key: raw} if key else raw), target
+
+        payload, resolved_input = normalize_report_payload(data)
+
         buffer = BytesIO()
         doc = SimpleDocTemplate(buffer, pagesize=letter,
                               rightMargin=50, leftMargin=50,
@@ -566,7 +607,7 @@ def generate_pdf_report(title: str, data: dict, input_text: str = "") -> bytes:
         
         meta_data = [
             ['Generated:', datetime.now().strftime("%Y-%m-%d %H:%M:%S")],
-            ['Target:', input_text or 'N/A'],
+            ['Target:', resolved_input or 'N/A'],
             ['Purpose:', 'Educational - Ethical Hacking Demonstration'],
         ]
         meta_table = Table(meta_data, colWidths=[100, 400])
@@ -610,35 +651,42 @@ def generate_pdf_report(title: str, data: dict, input_text: str = "") -> bytes:
                 story.append(t)
                 story.append(Spacer(1, 10))
         
-        if "ip_lookup" in data:
-            add_section("🌐 IP INTELLIGENCE", data["ip_lookup"])
+        if "ip_lookup" in payload:
+            add_section("🌐 IP INTELLIGENCE", payload["ip_lookup"])
         
-        if "phone_intel" in data:
-            add_section("📱 PHONE INTELLIGENCE", data["phone_intel"])
+        if "phone_intel" in payload:
+            add_section("📱 PHONE INTELLIGENCE", payload["phone_intel"])
         
-        if "email_analysis" in data:
-            add_section("📧 EMAIL ANALYSIS", data["email_analysis"])
+        if "email_analysis" in payload:
+            add_section("📧 EMAIL ANALYSIS", payload["email_analysis"])
         
-        if "email_recon" in data:
-            recon = data["email_recon"]
+        if "gmail_osint" in payload:
+            add_section("📧 GMAIL / GOOGLE OSINT", payload["gmail_osint"])
+
+        if "fb_osint" in payload:
+            add_section("📘 FACEBOOK OSINT", payload["fb_osint"])
+
+        if "email_recon" in payload:
+            recon = payload["email_recon"]
             story.append(Paragraph("📨 EMAIL RECON (Multi-Platform)", header_style))
-            if "services" in recon:
-                services = recon.get("services", {})
-                found_services = [s for s, v in services.items() if v]
-                if found_services:
-                    items = [[s] for s in found_services[:10]]
-                    t = Table([["Platform"]] + items)
-                    t.setStyle(TableStyle([
-                        ('BACKGROUND', (0, 0), (-1, 0), darkblue),
-                        ('TEXTCOLOR', (0, 0), (-1, 0), Color(1, 1, 1)),
-                        ('FONTSIZE', (0, 0), (-1, -1), 9),
-                        ('PADDING', (0, 0), (-1, -1), 4),
-                    ]))
-                    story.append(t)
+            found_services = [entry.get("service", "") for entry in (recon.get("found_in") or []) if entry.get("service")]
+            if found_services:
+                items = [[s] for s in found_services[:12]]
+                t = Table([["Platform"]] + items)
+                t.setStyle(TableStyle([
+                    ('BACKGROUND', (0, 0), (-1, 0), darkblue),
+                    ('TEXTCOLOR', (0, 0), (-1, 0), Color(1, 1, 1)),
+                    ('FONTSIZE', (0, 0), (-1, -1), 9),
+                    ('PADDING', (0, 0), (-1, -1), 4),
+                ]))
+                story.append(t)
             story.append(Spacer(1, 10))
         
-        if "username_search" in data:
-            user = data["username_search"]
+        if "whatsapp_osint" in payload:
+            add_section("💚 WHATSAPP OSINT", payload["whatsapp_osint"])
+
+        if "username_search" in payload:
+            user = payload["username_search"]
             story.append(Paragraph("👤 USERNAME SEARCH", header_style))
             if user.get("found"):
                 found = user["found"]
@@ -654,16 +702,35 @@ def generate_pdf_report(title: str, data: dict, input_text: str = "") -> bytes:
                     story.append(t)
             story.append(Spacer(1, 10))
         
-        if "tiktok_osint" in data:
-            tt = data["tiktok_osint"]
-            if tt.get("found"):
+        if "github_recon" in payload:
+            gh = payload["github_recon"]
+            if isinstance(gh, dict) and gh.get("profile"):
+                add_section("💻 GITHUB RECON", {
+                    "login": (gh.get("profile") or {}).get("login"),
+                    "name": (gh.get("profile") or {}).get("name"),
+                    "location": (gh.get("profile") or {}).get("location"),
+                    "public_repos": (gh.get("stats") or {}).get("total_repos"),
+                    "followers": (gh.get("stats") or {}).get("followers"),
+                    "unique_leaked_emails": (gh.get("stats") or {}).get("unique_leaked_emails"),
+                })
+
+        if "people_search" in payload:
+            add_section("🧑 PEOPLE SEARCH", payload["people_search"])
+
+        if "dns_lookup" in payload:
+            add_section("🌐 DOMAIN / DNS", payload["dns_lookup"])
+
+        if "tiktok_osint" in payload:
+            tt = payload["tiktok_osint"]
+            if isinstance(tt, dict) and not tt.get("error"):
                 story.append(Paragraph("📹 TIKTOK OSINT", header_style))
                 items = [
-                    ["Followers", f"{tt.get('followers', 0):,}"],
-                    ["Following", f"{tt.get('following', 0)}"],
-                    ["Likes", f"{tt.get('likes', 0):,}"],
-                    ["Videos", f"{tt.get('videos', 0)}"],
-                    ["Influencer Tier", tt.get('tier', 'N/A')],
+                    ["Username", tt.get('username', 'N/A')],
+                    ["Followers", str(tt.get('followers', 0))],
+                    ["Following", str(tt.get('following', 0))],
+                    ["Likes", str(tt.get('total_likes', 0))],
+                    ["Videos", str(tt.get('video_count', 0))],
+                    ["Region", tt.get('region', 'N/A')],
                 ]
                 t = Table(items)
                 t.setStyle(TableStyle([

@@ -25,7 +25,7 @@ from modules.gmail_osint import gmail_lookup, check_gmail_rate_limit
 from modules.fb_osint import fb_lookup, check_fb_rate_limit
 from modules.email_recon import email_recon, check_email_recon_rate_limit
 from modules.tiktok_osint import tiktok_lookup, check_tiktok_rate_limit
-from modules.universal_recon import universal_recon, _parallel_modules, format_universal_report
+from modules.universal_recon import run_universal
 from utils.rate_limit_universal import check_universal_rate_limit
 from utils.apis import deploy_html, shorten_url, generate_text_report, generate_pdf_report, upload_bytes
 from utils.access import load_authorized_users, add_user, remove_user, get_all_users
@@ -652,15 +652,11 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     f"<i>Este módulo ejecuta múltiples búsquedas simultáneas.</i>"
                 )
             else:
-                input_type = universal_recon(text.strip())
-                all_results = await _parallel_modules(
-                    phone=text.strip() if input_type == "phone" else None,
-                    email=text.strip() if input_type == "email" else None,
-                    username=text.strip() if input_type == "username" else None,
-                    ip=text.strip() if input_type == "ip" else None,
-                    name=text.strip() if input_type == "name" else None,
+                input_type, all_results, response = await run_universal(
+                    text.strip(),
+                    user_id=update.effective_user.id,
                 )
-                response = format_universal_report(all_results, text.strip(), input_type)
+                data = all_results
                 context.user_data["universal_results"] = all_results
                 context.user_data["last_input"] = text.strip()
 
