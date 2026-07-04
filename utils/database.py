@@ -47,6 +47,7 @@ MODULE_LABELS = {
     "menu_tiktok":      "TikTok OSINT",
     "menu_geo":         "Geo Tracker",
     "menu_cam":         "Camera Trap",
+    "menu_universal":   "Universal Recon",
 }
 
 

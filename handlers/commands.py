@@ -25,7 +25,9 @@ from modules.gmail_osint import gmail_lookup, check_gmail_rate_limit
 from modules.fb_osint import fb_lookup, check_fb_rate_limit
 from modules.email_recon import email_recon, check_email_recon_rate_limit
 from modules.tiktok_osint import tiktok_lookup, check_tiktok_rate_limit
-from utils.apis import deploy_html, shorten_url, generate_text_report, upload_bytes
+from modules.universal_recon import universal_recon, _parallel_modules, format_universal_report
+from utils.rate_limit_universal import check_universal_rate_limit
+from utils.apis import deploy_html, shorten_url, generate_text_report, generate_pdf_report, upload_bytes
 from utils.access import load_authorized_users, add_user, remove_user, get_all_users
 from utils.rate_limit import check_rate_limit
 from utils.parse import extract_phone_and_target
@@ -282,10 +284,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"👋 <b>Bienvenido, {tg_user.first_name}</b>\n\n"
         f"🛡️ <b>GekOsint v6.1</b> — Sistema de Inteligencia OSINT\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"🔍 <b>IP Lookup</b>        — Geoloc, WHOIS, puertos, blacklist\n"
-        f"📱 <b>Phone Intel</b>      — Caller ID, spam, operadora, región\n"
+        f"🔍 <b>IP Lookup</b>        — Geoloc, WHOIS, puertos, blacklist, ASN detallado\n"
+        f"📱 <b>Phone Intel</b>      — Caller ID, spam, operadora, región, carrier geo\n"
         f"👤 <b>Username Search</b>  — 50+ plataformas + Telegram\n"
-        f"📧 <b>Email Analysis</b>   — Reputación, brechas, DNS\n"
+        f"📧 <b>Email Analysis</b>   — Reputación, brechas, DNS, dominio info\n"
         f"💚 <b>WhatsApp OSINT</b>   — Registro, spam, Business\n"
         f"🌍 <b>Geo Tracker</b>      — Enlace trampa de ubicación\n"
         f"📸 <b>Camera Trap</b>      — Captura de cámara remota\n"
@@ -297,8 +299,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"📧 <b>Gmail OSINT</b>      — Existencia, recovery hints, People API, YouTube\n"
         f"📘 <b>FB OSINT</b>         — User ID, foto, recovery hints (email/phone)\n"
         f"📹 <b>TikTok OSINT</b>     — Perfil, stats, engagement, tier de influencer\n"
-        f"📨 <b>Email Recon</b>      — Multi-plataforma: 12+ servicios en paralelo\n\n"
-        f"<i>🔒 {total} usuario(s) autorizado(s) · 16 módulos activos</i>"
+        f"📨 <b>Email Recon</b>      — Multi-plataforma: 12+ servicios en paralelo\n"
+        f"🔍 <b>Universal Recon</b>   — Busqueda automática en todos los modulos\n\n"
+        f"<i>🔒 {total} usuario(s) autorizado(s) · 17 módulos activos · Export PDF</i>"
     )
     if update.callback_query:
         await update.callback_query.edit_message_text(txt, reply_markup=main_menu(), parse_mode="HTML")
@@ -343,14 +346,36 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    # Exportar reporte PDF
+    if data == "export_pdf":
+        result_data = context.user_data.get("last_result_data", {})
+        input_text = result_data.get("input", "")
+        module_mode = result_data.get("mode", "")
+        raw_data = result_data.get("data", {})
+        
+        if not raw_data and not result_data.get("universal_results"):
+            await query.answer("No hay datos para exportar a PDF.", show_alert=True)
+            return
+        await query.answer("Generando reporte PDF…")
+        pdf_bytes = generate_pdf_report(f"OSINT {module_mode}", result_data)
+        from io import BytesIO
+        bio = BytesIO(pdf_bytes)
+        bio.name = f"GekOsint_{module_mode}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+        await context.bot.send_document(
+            query.message.chat_id, bio,
+            caption="🛡️ Reporte PDF GekOsint v6.1"
+        )
+        return
+
     # Acerca de
     if data == "menu_about":
         context.user_data.pop("mode", None)
         await query.edit_message_text(
-            "ℹ️ <b>GekOsint v6.0</b>\n\n"
+            "ℹ️ <b>GekOsint v6.1</b>\n\n"
             "🛡️ Sistema de Inteligencia OSINT\n"
-            "📋 12 módulos activos\n"
+            "📋 17 módulos activos\n"
             "🔒 Acceso restringido con rate limiting\n"
+            "📄 Exportación a PDF profesional disponible\n"
             "☁️ Cloud-Ready (Railway, Render, Koyeb, Fly.io)\n\n"
             "<i>Desarrollado para investigación ética y legal.</i>",
             reply_markup=back_btn(), parse_mode="HTML"
@@ -480,6 +505,23 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "(nano/micro/macro/mega), cuenta comercial, región y fecha de creación.\n\n"
             "⏳ <i>Rate limit: 1/45s, 20/hora por usuario.</i>"
         ),
+        "menu_universal": (
+            "🔍 <b>Universal Recon</b>\n\n"
+            "Introduce <b>email, teléfono, nombre, username o dominio</b>:\n\n"
+            "<code>usuario@gmail.com</code>\n"
+            "<code>+52 55 1234 5678</code>\n"
+            "<code>juan garcia</code>\n"
+            "<code>johndoe</code>\n\n"
+            "🚀 El sistema ejecutará AUTOMÁTICAMENTE todas las búsquedas "
+            "relevantes y generará un reporte consolidado con:"
+            "\n• Email Analysis + Recon"
+            "\n• Phone Intelligence"
+            "\n• IP Geolocation"
+            "\n• Username Search en 50+ plataformas"
+            "\n• People Search por nombre"
+            "\n• TikTok OSINT (si aplica)"
+            "\n\n⏳ <i>Rate limit suave: 1/45s, 10/hora.</i>"
+        ),
     }
 
     if data in _prompts:
@@ -601,6 +643,27 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 data = await tiktok_lookup(text.strip())
                 response = format_tiktok_osint(data)
 
+        elif mode == "menu_universal":
+            allowed, wait = check_universal_rate_limit(update.effective_user.id)
+            if not allowed:
+                response = (
+                    f"⏳ <b>Universal Recon — rate limit</b>\n\n"
+                    f"Demasiadas consultas. Espera <b>{wait}s</b> antes de continuar.\n\n"
+                    f"<i>Este módulo ejecuta múltiples búsquedas simultáneas.</i>"
+                )
+            else:
+                input_type = universal_recon(text.strip())
+                all_results = await _parallel_modules(
+                    phone=text.strip() if input_type == "phone" else None,
+                    email=text.strip() if input_type == "email" else None,
+                    username=text.strip() if input_type == "username" else None,
+                    ip=text.strip() if input_type == "ip" else None,
+                    name=text.strip() if input_type == "name" else None,
+                )
+                response = format_universal_report(all_results, text.strip(), input_type)
+                context.user_data["universal_results"] = all_results
+                context.user_data["last_input"] = text.strip()
+
         elif mode == "menu_exif":
             # El usuario mandó texto en vez de imagen
             await msg.edit_text(
@@ -623,11 +686,17 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
 
         context.user_data["last_result"] = response
+        context.user_data["last_result_data"] = {
+            "mode": mode,
+            "input": text.strip(),
+            "data": locals().get("data", {}),
+            "universal_results": context.user_data.get("universal_results")
+        }
         context.user_data.pop("mode", None)
         await msg.edit_text(
             response, parse_mode="HTML",
             disable_web_page_preview=True,
-            reply_markup=back_btn(show_export=True)
+            reply_markup=back_btn(show_export=True, show_pdf=True)
         )
 
     except Exception as e:

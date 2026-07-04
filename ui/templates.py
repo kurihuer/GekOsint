@@ -79,9 +79,23 @@ def format_ip_result(data: dict) -> str:
         txt += "✅ <b>Blacklist:</b> No encontrada\n"
 
     ports = data.get("open_ports", [])
-    if ports and ports != ["Ninguno detectado"]:
-        txt += render_section("PUERTOS ABIERTOS (Shodan)")
+    if ports and ports != ["Ninguno detectado"] and ports != ["Requiere SHODAN_API_KEY"]:
+        txt += render_section("PUERTAS ABIERTAS (Shodan)")
         txt += " | ".join(f"<code>{p}</code>" for p in ports[:10]) + "\n"
+
+    # ASN Info extendido
+    if data.get("asn_info"):
+        txt += render_section("ASN DETALLADO")
+        asn = data["asn_info"]
+        txt += f"🔢 <b>ASN:</b> {asn.get('asn', 'N/A')}\n"
+        txt += f"🏢 <b>Nombre ASN:</b> {asn.get('name', 'N/A')}\n"
+        txt += f"🏳️ <b>País ASN:</b> {asn.get('country', 'N/A')}\n"
+
+    # RDNS extendido
+    if data.get("rdns_extended"):
+        txt += render_section("REVERSE DNS DETALLADO")
+        for rdns_entry in data["rdns_extended"][:3]:
+            txt += f"🔗 <code>{rdns_entry}</code>\n"
 
     txt += render_section("MAPA Y OSINT")
     txt += f"🗺️ <a href='{data['map_url']}'>Abrir en Google Maps</a>\n"
@@ -209,6 +223,14 @@ def format_phone_result(data: dict) -> str:
         if cgeo.get("map_url"):
             txt += f"<a href='{cgeo['map_url']}'>Ver en Maps</a>\n"
         txt += "<i>⚠️ Esta NO es la ubicación del usuario — es la del servidor del operador.</i>\n"
+
+    # ── Información Técnica adicional ────────────────────────────────────────
+    txt += render_section("DETALLES TÉCNICOS")
+    cc = data.get("country_code", "")
+    if cc:
+        txt += f"🔢 <b>Código país ISO:</b> <code>{cc}</code>\n"
+    txt += f"🔤 <b>Número E.164:</b> <code>{data.get('number', 'N/A')}</code>\n"
+    txt += f"🎯 <b>Lada/Prefijo:</b> <code>{data.get('national', 'N/A').replace(' ', '')[:3]}...</code>\n"
 
     # ── Contacto directo ──────────────────────────────────────────────────
     txt += render_section("CONTACTO DIRECTO")
@@ -370,6 +392,19 @@ def format_email_result(data: dict) -> str:
             txt += f"  <i>…y {len(breaches) - 10} más</i>\n"
     else:
         txt += "✅ No encontrado en brechas conocidas\n"
+
+    # ── Verificación adicional ───────────────────────────────────────────────
+    txt += render_section("VERIFICACIÓN ADICIONAL")
+    if data.get("disposable"):
+        txt += "⚠️ <b>Correo desechable:</b> Puede usarse para spam/abuso\n"
+    if data.get("suspicious"):
+        txt += "⚠️ <b>Correo sospechoso:</b> Patrón de alias sospechoso detectado\n"
+    if data.get("mx_records"):
+        mx_count = len(data["mx_records"])
+        txt += f"📧 <b>MX Records:</b> {mx_count} servidor(es) configurado(s)\n"
+
+    txt += render_section("RECOMENDACIONES")
+    txt += "🔐 <i>Para tu seguridad: usa 2FA y verifica el remitente antes de hacer clic</i>\n"
 
     links = data.get("links", {})
     txt += render_section("VERIFICAR EN")

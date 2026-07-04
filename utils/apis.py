@@ -5,8 +5,8 @@ import urllib.parse
 import httpx
 import os
 from config import PAGES_DIR
-
-import datetime
+from datetime import datetime
+from io import BytesIO
 
 logger = logging.getLogger(__name__)
 
@@ -503,3 +503,187 @@ async def upload_bytes(file_bytes: bytes, filename: str, content_type: str = "ap
             logger.debug(f"upload 0x0 fallo: {e}")
 
     return None
+
+
+def generate_pdf_report(title: str, data: dict, input_text: str = "") -> bytes:
+    """Genera un reporte PDF profesional con todos los resultados del OSINT."""
+    try:
+        from reportlab.lib.pagesizes import letter
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+        from reportlab.lib.colors import Color, black, darkblue, crimson
+        from reportlab.lib.units import inch
+        from reportlab.lib.enums import TA_CENTER, TA_LEFT
+        from reportlab.pdfbase import pdfmetrics
+        from reportlab.pdfbase.ttfonts import TTFont
+        
+        buffer = BytesIO()
+        doc = SimpleDocTemplate(buffer, pagesize=letter,
+                              rightMargin=50, leftMargin=50,
+                              topMargin=50, bottomMargin=50)
+        
+        styles = getSampleStyleSheet()
+        
+        title_style = ParagraphStyle(
+            'CustomTitle',
+            parent=styles['Heading1'],
+            fontSize=22,
+            textColor=darkblue,
+            alignment=TA_CENTER,
+            spaceAfter=20
+        )
+        
+        header_style = ParagraphStyle(
+            'CustomHeader',
+            parent=styles['Heading2'],
+            fontSize=14,
+            textColor=darkblue,
+            spaceBefore=15,
+            spaceAfter=10
+        )
+        
+        normal_style = ParagraphStyle(
+            'CustomNormal',
+            parent=styles['Normal'],
+            fontSize=10,
+            leading=14,
+            spaceAfter=6
+        )
+        
+        danger_style = ParagraphStyle(
+            'Danger',
+            parent=styles['Normal'],
+            fontSize=10,
+            textColor=crimson,
+            leading=14,
+            spaceAfter=6
+        )
+        
+        story = []
+        
+        story.append(Paragraph("🔒 GEKOSINT OSINT REPORT", title_style))
+        story.append(Spacer(1, 10))
+        
+        meta_data = [
+            ['Generated:', datetime.now().strftime("%Y-%m-%d %H:%M:%S")],
+            ['Target:', input_text or 'N/A'],
+            ['Purpose:', 'Educational - Ethical Hacking Demonstration'],
+        ]
+        meta_table = Table(meta_data, colWidths=[100, 400])
+        meta_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, -1), Color(0.95, 0.95, 0.95)),
+            ('TEXTCOLOR', (0, 0), (-1, -1), black),
+            ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, -1), 10),
+            ('PADDING', (0, 0), (-1, -1), 8),
+            ('GRID', (0, 0), (-1, -1), 0.5, black),
+        ]))
+        story.append(meta_table)
+        story.append(Spacer(1, 20))
+        
+        def add_section(title_text: str, content_dict: dict):
+            if "error" in content_dict:
+                return
+            
+            story.append(Paragraph(title_text, header_style))
+            
+            items = []
+            for key, value in list(content_dict.items())[:15]:
+                if key in ["error", "missing_keys", "osint_links", "links", "social_search_links"]:
+                    continue
+                if value is None:
+                    continue
+                if isinstance(value, dict):
+                    for k2, v2 in list(value.items())[:5]:
+                        if v2 is not None and not isinstance(v2, dict):
+                            items.append([f"{key}.{k2}", str(v2)[:100]])
+                elif not isinstance(value, (list, dict)):
+                    items.append([key.replace('_', ' ').title(), str(value)[:150]])
+            
+            if items:
+                t = Table(items, colWidths=[150, 350])
+                t.setStyle(TableStyle([
+                    ('FONTSIZE', (0, 0), (-1, -1), 9),
+                    ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+                    ('GRID', (0, 0), (-1, -1), 0.25, Color(0.7, 0.7, 0.7)),
+                ]))
+                story.append(t)
+                story.append(Spacer(1, 10))
+        
+        if "ip_lookup" in data:
+            add_section("🌐 IP INTELLIGENCE", data["ip_lookup"])
+        
+        if "phone_intel" in data:
+            add_section("📱 PHONE INTELLIGENCE", data["phone_intel"])
+        
+        if "email_analysis" in data:
+            add_section("📧 EMAIL ANALYSIS", data["email_analysis"])
+        
+        if "email_recon" in data:
+            recon = data["email_recon"]
+            story.append(Paragraph("📨 EMAIL RECON (Multi-Platform)", header_style))
+            if "services" in recon:
+                services = recon.get("services", {})
+                found_services = [s for s, v in services.items() if v]
+                if found_services:
+                    items = [[s] for s in found_services[:10]]
+                    t = Table([["Platform"]] + items)
+                    t.setStyle(TableStyle([
+                        ('BACKGROUND', (0, 0), (-1, 0), darkblue),
+                        ('TEXTCOLOR', (0, 0), (-1, 0), Color(1, 1, 1)),
+                        ('FONTSIZE', (0, 0), (-1, -1), 9),
+                        ('PADDING', (0, 0), (-1, -1), 4),
+                    ]))
+                    story.append(t)
+            story.append(Spacer(1, 10))
+        
+        if "username_search" in data:
+            user = data["username_search"]
+            story.append(Paragraph("👤 USERNAME SEARCH", header_style))
+            if user.get("found"):
+                found = user["found"]
+                items = [[site, url] for site, url in found[:10]]
+                if items:
+                    t = Table([["Platform", "URL"]] + items)
+                    t.setStyle(TableStyle([
+                        ('BACKGROUND', (0, 0), (-1, 0), darkblue),
+                        ('TEXTCOLOR', (0, 0), (-1, 0), Color(1, 1, 1)),
+                        ('FONTSIZE', (0, 0), (-1, -1), 8),
+                        ('PADDING', (0, 0), (-1, -1), 3),
+                    ]))
+                    story.append(t)
+            story.append(Spacer(1, 10))
+        
+        if "tiktok_osint" in data:
+            tt = data["tiktok_osint"]
+            if tt.get("found"):
+                story.append(Paragraph("📹 TIKTOK OSINT", header_style))
+                items = [
+                    ["Followers", f"{tt.get('followers', 0):,}"],
+                    ["Following", f"{tt.get('following', 0)}"],
+                    ["Likes", f"{tt.get('likes', 0):,}"],
+                    ["Videos", f"{tt.get('videos', 0)}"],
+                    ["Influencer Tier", tt.get('tier', 'N/A')],
+                ]
+                t = Table(items)
+                t.setStyle(TableStyle([
+                    ('FONTSIZE', (0, 0), (-1, -1), 10),
+                    ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+                ]))
+                story.append(t)
+                story.append(Spacer(1, 10))
+        
+        story.append(Paragraph(
+            "⚠️ This report is for educational purposes only. "
+            "Demonstrating OSINT capabilities to raise cybersecurity awareness.",
+            ParagraphStyle('Footer', parent=styles['Normal'], 
+                          fontSize=9, textColor=Color(0.4, 0.4, 0.4),
+                          alignment=TA_CENTER)
+        ))
+        
+        doc.build(story)
+        return buffer.getvalue()
+        
+    except ImportError:
+        logger.warning("reportlab no instalado, usando fallback TXT")
+        return generate_text_report(title, str(data)).encode()

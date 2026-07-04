@@ -172,6 +172,39 @@ def _ports_from_shodan(shodan_data):
     return labeled
 
 
+def _get_additional_intel(ip_address):
+    """Obtiene información adicional: ASN detallado, reverse DNS extendido."""
+    intel = {"asn_info": None, "rdns_extended": None}
+    try:
+        r = httpx.get(
+            f"https://api.bgpview.io/ip/{ip_address}",
+            timeout=10, headers=HEADERS
+        )
+        if r.status_code == 200:
+            data = r.json()
+            if data.get("data", {}).get("asn"):
+                asn = data["data"]["asn"]
+                intel["asn_info"] = {
+                    "asn": asn.get("asn", {}).get("asn"),
+                    "name": asn.get("asn", {}).get("name"),
+                    "country": asn.get("asn", {}).get("country_code"),
+                    "type": asn.get("asn", {}).get("type"),
+                }
+    except Exception:
+        pass
+    try:
+        r = httpx.get(
+            f"https://api.hackertarget.com/reversedns/?q={ip_address}",
+            timeout=8
+        )
+        if r.status_code == 200 and r.text:
+            lines = [l.strip() for l in r.text.split('\n') if l.strip() and 'error' not in l.lower()]
+            intel["rdns_extended"] = lines[:5] if lines else None
+    except Exception:
+        pass
+    return intel
+
+
 def get_ip_info(ip_address):
     ip_address = ip_address.strip()
     missing_keys = []
@@ -275,6 +308,7 @@ def get_ip_info(ip_address):
             pass
 
         whois = _get_whois_basic(ip_address)
+        additional = _get_additional_intel(ip_address)
 
         # Puertos: SOLO desde Shodan (sin escaneo por socket)
         ports_from_shodan = _ports_from_shodan(shodan_data)
@@ -325,7 +359,9 @@ def get_ip_info(ip_address):
                 "AbuseIPDB": f"https://www.abuseipdb.com/check/{ip_address}",
                 "GreyNoise": f"https://viz.greynoise.io/ip/{ip_address}",
                 "IPVoid":    f"https://www.ipvoid.com/ip-blacklist-check/?ip={ip_address}",
-            }
+            },
+            "asn_info": additional.get("asn_info"),
+            "rdns_extended": additional.get("rdns_extended"),
         }
         result["missing_keys"] = missing_keys
         _CACHE[ck] = (now, result)

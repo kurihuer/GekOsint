@@ -7,3 +7,4 @@ Pillow==12.1.1
 dnspython==2.8.0
 aiolimiter>=1.1.0,<2
 instaloader>=4.13
+reportlab>=4.0.0

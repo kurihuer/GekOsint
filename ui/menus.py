@@ -35,14 +35,19 @@ def main_menu():
             InlineKeyboardButton("\U0001f4e8 Email Recon",  callback_data='menu_emailrecon')
         ],
         [
+            InlineKeyboardButton("\U0001f50d\U0001f4d0 Universal Recon", callback_data='menu_universal'),
+        ],
+        [
             InlineKeyboardButton("\u2139\ufe0f Acerca de", callback_data='menu_about')
         ]
     ]
     return InlineKeyboardMarkup(keyboard)
 
-def back_btn(show_export=False):
+def back_btn(show_export=False, show_pdf=False):
     btns = []
     if show_export:
         btns.append([InlineKeyboardButton("\U0001f4c4 Exportar Reporte (.txt)", callback_data='export_txt')])
+    if show_pdf:
+        btns.append([InlineKeyboardButton("\U0001f4c3 Exportar Reporte (.pdf)", callback_data='export_pdf')])
     btns.append([InlineKeyboardButton("\u2b05\ufe0f Volver al Menu Principal", callback_data='start')])
     return InlineKeyboardMarkup(btns)

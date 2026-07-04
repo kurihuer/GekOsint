@@ -10,6 +10,11 @@ _IPV6_RE = re.compile(r'\b(?:[0-9a-f]{0,4}:){2,7}[0-9a-f]{0,4}\b', re.IGNORECASE
 _HOST_RE = re.compile(r'^[a-z0-9.-]+\.[a-z]{2,63}$', re.IGNORECASE)
 _SEP_RE  = re.compile(r'[|,;\n\r\t]')
 
+# ── Clasificación de identificadores (usado por Perfil Completo) ────────────
+_EMAIL_RE    = re.compile(r'^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$')
+_USERNAME_RE = re.compile(r'^@?[a-zA-Z0-9_.]{2,30}$')
+_NAME_RE     = re.compile(r'^[a-záéíóúñüA-ZÁÉÍÓÚÑÜ]+(?:\s+[a-záéíóúñüA-ZÁÉÍÓÚÑÜ]+)+$')
+
 
 def extract_phone_and_target(raw: str) -> tuple[str, str | None]:
     """
