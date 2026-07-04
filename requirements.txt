@@ -1,0 +1,10 @@
+python-telegram-bot[rate-limiter,webhooks]==21.9
+python-dotenv==1.2.2
+requests==2.32.5
+httpx[socks]==0.28.1
+phonenumbers==8.13.27
+Pillow==12.1.1
+dnspython==2.8.0
+aiolimiter>=1.1.0,<2
+instaloader>=4.13
+reportlab>=4.0.0
