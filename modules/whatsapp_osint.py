@@ -486,6 +486,10 @@ def analyze_whatsapp(number):
                 "facebook_dork": f"https://www.google.com/search?q=site%3Afacebook.com+%22{clean}%22+OR+%22{e164}%22",
                 "instagram_dork": f"https://www.google.com/search?q=site%3Ainstagram.com+%22{clean}%22+OR+%22{e164}%22",
                 "tiktok_dork": f"https://www.google.com/search?q=site%3Atiktok.com+%22{clean}%22+OR+%22{e164}%22",
+                "facebook_search": f"https://www.facebook.com/search/top/?q={urllib.parse.quote(e164)}",
+                "instagram_search": f"https://www.instagram.com/explore/search/keyword/?q={urllib.parse.quote(e164)}",
+                "tiktok_search": f"https://www.tiktok.com/search?q={urllib.parse.quote(e164)}",
+                "x_search": f"https://x.com/search?q=%22{urllib.parse.quote(e164)}%22&src=typed_query",
             }
         }
         result["business"] = is_business

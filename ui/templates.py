@@ -260,6 +260,10 @@ def format_phone_result(data: dict) -> str:
         txt += " | ".join(data["data_sources"][:8]) + "\n"
 
     socials = data.get("social_search_links", [])
+    direct_socials = data.get("direct_platform_links", [])
+    if direct_socials:
+        txt += render_section("BÚSQUEDA DIRECTA EN PLATAFORMAS")
+        txt += " | ".join(f"<a href='{l['url']}'>{l['name']}</a>" for l in direct_socials) + "\n"
     if socials:
         txt += render_section("BÚSQUEDA EN REDES (DORKS)")
         txt += " | ".join(f"<a href='{l['url']}'>{l['name']}</a>" for l in socials) + "\n"
@@ -640,6 +644,19 @@ def format_whatsapp_result(data: dict) -> str:
     txt += render_section("VERIFICAR EN")
     parts = [f"<a href='{links[k]}'>{v}</a>" for k, v in _lmap.items() if links.get(k)]
     txt += " | ".join(parts) + "\n"
+
+    social_parts = []
+    for key, label in (
+        ("facebook_search", "Facebook directo"),
+        ("instagram_search", "Instagram directo"),
+        ("tiktok_search", "TikTok directo"),
+        ("x_search", "X directo"),
+    ):
+        if links.get(key):
+            social_parts.append(f"<a href='{links[key]}'>{label}</a>")
+    if social_parts:
+        txt += render_section("BÚSQUEDA DIRECTA EN PLATAFORMAS")
+        txt += " | ".join(social_parts) + "\n"
 
     social_parts = []
     for key, label in (

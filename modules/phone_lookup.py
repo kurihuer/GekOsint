@@ -62,6 +62,34 @@ def _carrier_ip(carrier_name: str):
     return None
 
 
+def _carrier_geo_consistent(carrier_name: str, geo: dict | None) -> bool:
+    if not carrier_name or not geo:
+        return False
+
+    carrier_low = carrier_name.lower()
+    source_blob = " ".join(
+        str(geo.get(k, "") or "")
+        for k in ("isp", "org", "as", "company", "asname")
+    ).lower()
+    if not source_blob:
+        return False
+
+    keyword_groups = (
+        ("telcel", "radiomovil", "america movil", "dipsa"),
+        ("movistar", "telefonica"),
+        ("at&t", "att", "iusacell", "unefon"),
+        ("claro", "america movil"),
+        ("megacable",),
+        ("izzi",),
+        ("totalplay",),
+        ("virgin",),
+    )
+    for group in keyword_groups:
+        if any(k in carrier_low for k in group):
+            return any(k in source_blob for k in group)
+    return False
+
+
 def _is_voip_carrier(carrier_name: str) -> bool:
     if not carrier_name:
         return False
@@ -503,6 +531,8 @@ def analyze_phone(number: str) -> dict:
     )
     carrier_ip   = _carrier_ip(carrier_resolved)
     carrier_geo  = get_ip_geolocation(carrier_ip) if carrier_ip else None
+    if not _carrier_geo_consistent(carrier_resolved, carrier_geo):
+        carrier_geo = None
 
     caller_name   = tc_api.get("name") or tc_web.get("name") or spam_data.get("name")
     caller_source = "Truecaller API" if tc_api.get("name") else \
@@ -622,6 +652,12 @@ def analyze_phone(number: str) -> dict:
             {"name": "Instagram", "url": f"https://www.google.com/search?q=site%3Ainstagram.com+%22{clean_q}%22+OR+%22{e164_q}%22"},
             {"name": "TikTok", "url": f"https://www.google.com/search?q=site%3Atiktok.com+%22{clean_q}%22+OR+%22{e164_q}%22"},
             {"name": "X", "url": f"https://www.google.com/search?q=site%3Ax.com+%22{clean_q}%22+OR+%22{e164_q}%22"},
+        ],
+        "direct_platform_links": [
+            {"name": "Facebook", "url": f"https://www.facebook.com/search/top/?q={e164_q}"},
+            {"name": "Instagram", "url": f"https://www.instagram.com/explore/search/keyword/?q={e164_q}"},
+            {"name": "TikTok", "url": f"https://www.tiktok.com/search?q={e164_q}"},
+            {"name": "X", "url": f"https://x.com/search?q=%22{e164_q}%22&src=typed_query"},
         ],
 
         "osint_links": [
