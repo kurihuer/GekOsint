@@ -36,6 +36,22 @@ def render_missing_keys(data: dict) -> str:
     return txt
 
 
+def _clean_runtime_error(message: str) -> str:
+    msg = (message or "").strip()
+    low = msg.lower()
+    if not msg:
+        return ""
+    if "invalid request" in low or "400 bad request" in low:
+        return "Instagram rechazó la consulta automática. Posible cambio de endpoint, bloqueo temporal o username inválido."
+    if "429" in low or "rate" in low or "too many" in low:
+        return "Instagram limitó temporalmente la consulta. Conviene reintentar más tarde."
+    if "checkpoint" in low or "login_required" in low or "401" in low:
+        return "Instagram bloqueó la sesión autenticada o pidió validación adicional."
+    if "graphql/query" in low or "http" in low:
+        return "Instagram no devolvió datos reutilizables desde el endpoint consultado."
+    return msg[:220]
+
+
 # ── IP Intelligence ───────────────────────────────────────────────────────────
 
 def format_ip_result(data: dict) -> str:
@@ -337,12 +353,14 @@ def format_username_result(username: str, found: list, telegram_data: dict = Non
             txt += "❌ <b>Estado:</b> No encontrado / Privado\n"
 
     if found:
-        txt += render_section(f"REDES SOCIALES — {len(found)} encontradas")
+        txt += render_section(f"PERFILES CONFIRMADOS — {len(found)} encontrados")
         for site, url in found:
             txt += f"  ✅ <a href='{url}'>{site}</a>\n"
     else:
-        txt += render_section("REDES SOCIALES")
-        txt += "Sin perfiles encontrados en esta búsqueda.\n"
+        txt += render_section("PERFILES CONFIRMADOS")
+        txt += "Sin perfiles confirmados en esta búsqueda.\n"
+
+    txt += "\n<i>Solo se muestran sitios verificados. Plataformas con muro de login o respuestas ambiguas se omiten para evitar falsos positivos.</i>\n"
 
     txt += render_section("BÚSQUEDA AVANZADA")
     q = username
@@ -749,7 +767,7 @@ def format_people_result(data: dict) -> str:
 
     profiles = data.get("social_profiles", [])
     if profiles:
-        txt += render_section(f"PERFILES ENCONTRADOS ({len(profiles)})")
+        txt += render_section(f"PERFILES CONFIRMADOS ({len(profiles)})")
         by_site: dict = {}
         for p in profiles:
             by_site.setdefault(p["site"], []).append(p)
@@ -758,11 +776,11 @@ def format_people_result(data: dict) -> str:
             txt += f"✅ <b>{site}</b> — @{best['username']}\n"
             txt += f"   <a href='{best['url']}'>{best['url']}</a>\n"
     else:
-        txt += render_section("PERFILES SOCIALES")
-        txt += "Sin perfiles encontrados con las variantes generadas.\n"
+        txt += render_section("PERFILES CONFIRMADOS")
+        txt += "Sin perfiles confirmados con las variantes generadas.\n"
         cands = data.get("candidate_profiles", [])
         if cands:
-            txt += render_section("POSIBLES USERNAMES (NO VERIFICADOS)")
+            txt += render_section("POSIBLES USERNAMES (REVISIÓN MANUAL)")
             for p in cands[:10]:
                 txt += f"🔗 <b>{p['site']}</b> — @{p['username']}\n"
                 txt += f"   <a href='{p['url']}'>{p['url']}</a>\n"
@@ -775,7 +793,7 @@ def format_people_result(data: dict) -> str:
 
     serp_hits = data.get("serpapi_hits", [])
     if serp_hits:
-        txt += render_section("HALLAZGOS WEB")
+        txt += render_section("HALLAZGOS WEB RELEVANTES")
         for hit in serp_hits[:5]:
             txt += f"🌐 <a href='{hit['url']}'>{hit['title']}</a>\n"
             if hit.get("snippet"):
@@ -1018,7 +1036,9 @@ def format_ig_osint(data: dict) -> str:
 
     if not data.get("found"):
         for err in data.get("errors", []):
-            out.append(f"❌ {err}")
+            clean = _clean_runtime_error(err)
+            if clean:
+                out.append(f"⚠️ {clean}")
         if data.get("recovery", {}).get("error"):
             out.append(f"❌ Recovery: {data['recovery']['error']}")
         return "\n".join(out)
@@ -1103,7 +1123,9 @@ def format_ig_osint(data: dict) -> str:
 
     # ── Errores no fatales ───────────────────────────────────────────────────
     for err in data.get("errors", []):
-        out.append(f"⚠️ <i>{err}</i>")
+        clean = _clean_runtime_error(err)
+        if clean:
+            out.append(f"⚠️ <i>{clean}</i>")
 
     # ── Footer ───────────────────────────────────────────────────────────────
     if p:

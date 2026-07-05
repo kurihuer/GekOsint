@@ -152,7 +152,7 @@ def _collect_identity_signals(data: dict, input_text: str, input_type: str) -> d
             _append_unique(profile_urls, f"https://www.facebook.com/{fb['user_id']}", lower=False)
 
     ig = data.get("ig_osint") or {}
-    if isinstance(ig, dict):
+    if isinstance(ig, dict) and ig.get("found"):
         profile = ig.get("profile") or {}
         recovery = ig.get("recovery") or {}
         _append_unique(names, profile.get("full_name"), lower=False)
@@ -190,7 +190,7 @@ def _collect_identity_signals(data: dict, input_text: str, input_type: str) -> d
         _append_unique(domains, dns.get("domain"))
 
     tiktok = data.get("tiktok_osint") or {}
-    if isinstance(tiktok, dict):
+    if isinstance(tiktok, dict) and not tiktok.get("error") and not tiktok.get("_blocked"):
         _append_unique(usernames, tiktok.get("username"))
         if tiktok.get("username"):
             _append_unique(profile_urls, f"https://www.tiktok.com/@{tiktok['username']}", lower=False)
@@ -829,7 +829,7 @@ def format_universal_report(data: dict, input_text: str, input_type: str) -> str
         profile_parts = []
         for idx, url in enumerate(identity["profile_urls"][:6], 1):
             profile_parts.append(f"<a href='{escape(url, quote=True)}'>Perfil {idx}</a>")
-        correlation_lines.append("🔎 <b>Perfiles:</b> " + " | ".join(profile_parts))
+        correlation_lines.append("🔎 <b>Perfiles confirmados:</b> " + " | ".join(profile_parts))
     if correlation_lines:
         sections.insert(1 if summary_lines else 0, "🧠 <b>CORRELACIÓN DE IDENTIDADES</b>\n" + "\n".join(correlation_lines))
     
