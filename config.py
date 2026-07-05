@@ -31,6 +31,12 @@ VT_API_KEY        = os.getenv("VT_API_KEY", "")
 ABUSEIPDB_KEY     = os.getenv("ABUSEIPDB_KEY", "")
 SHODAN_API_KEY    = os.getenv("SHODAN_API_KEY", "")
 GREYNOISE_API_KEY = os.getenv("GREYNOISE_API_KEY", "")
+TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID", "")
+TWILIO_AUTH_TOKEN  = os.getenv("TWILIO_AUTH_TOKEN", "")
+TWILIO_API_KEY     = os.getenv("TWILIO_API_KEY", "")
+TWILIO_API_SECRET  = os.getenv("TWILIO_API_SECRET", "")
+ZENROWS_API_KEY    = os.getenv("ZENROWS_API_KEY", "")
+SERPAPI_KEY        = os.getenv("SERPAPI_KEY", "")
 
 # ── Instagram OSINT (cookies de sesión, NO password) ─────────────────────────
 # Cómo obtenerlas: logueate en instagram.com con cuenta dedicada,

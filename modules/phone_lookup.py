@@ -12,7 +12,16 @@ import phonenumbers
 from phonenumbers import geocoder, carrier, timezone, number_type, NumberParseException
 import requests
 import re
-from config import logger, RAPIDAPI_KEY, NUMVERIFY_KEY
+from config import (
+    logger,
+    RAPIDAPI_KEY,
+    NUMVERIFY_KEY,
+    TWILIO_ACCOUNT_SID,
+    TWILIO_AUTH_TOKEN,
+    TWILIO_API_KEY,
+    TWILIO_API_SECRET,
+    ZENROWS_API_KEY,
+)
 from modules.geolocation import get_ip_geolocation
 
 try:
@@ -106,22 +115,134 @@ def _numverify(e164: str) -> dict:
     return {}
 
 
+def _fetch_html(url: str, *, allow_redirects: bool = True, timeout: int = 10, accept_language: str | None = None) -> str:
+    headers = dict(_HEADERS)
+    if accept_language:
+        headers["Accept-Language"] = accept_language
+
+    def _looks_blocked(text: str) -> bool:
+        low = (text or "").lower()
+        return any(
+            marker in low
+            for marker in (
+                "captcha",
+                "access denied",
+                "temporarily blocked",
+                "enable javascript",
+                "cloudflare",
+                "cf-browser-verification",
+            )
+        )
+
+    try:
+        r = requests.get(
+            url,
+            headers=headers,
+            timeout=timeout,
+            allow_redirects=allow_redirects,
+            proxies=_PROXIES,
+        )
+        if r.status_code == 200 and r.text and not _looks_blocked(r.text):
+            return r.text
+    except Exception as e:
+        logger.debug(f"[phone] direct fetch error {url}: {e}")
+
+    if not ZENROWS_API_KEY:
+        return ""
+
+    try:
+        zr = requests.get(
+            "https://api.zenrows.com/v1/",
+            params={
+                "apikey": ZENROWS_API_KEY,
+                "url": url,
+                "js_render": "true",
+                "premium_proxy": "true",
+            },
+            timeout=max(timeout + 8, 18),
+        )
+        if zr.status_code == 200:
+            return zr.text or ""
+        logger.debug(f"[phone] zenrows status={zr.status_code} url={url}")
+    except Exception as e:
+        logger.debug(f"[phone] zenrows fetch error {url}: {e}")
+    return ""
+
+
+def _twilio_lookup(e164: str) -> dict:
+    auth = None
+    auth_mode = None
+
+    if TWILIO_API_KEY and TWILIO_API_SECRET:
+        auth = (TWILIO_API_KEY, TWILIO_API_SECRET)
+        auth_mode = "api_key"
+    elif TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN:
+        auth = (TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+        auth_mode = "auth_token"
+
+    if not auth:
+        return {}
+
+    try:
+        r = requests.get(
+            f"https://lookups.twilio.com/v2/PhoneNumbers/{requests.utils.quote(e164, safe='')}",
+            params={"Fields": "line_type_intelligence,sms_pumping_risk"},
+            auth=auth,
+            timeout=12,
+        )
+        if r.status_code == 200:
+            data = r.json()
+            lti = data.get("line_type_intelligence") or {}
+            sms_risk = data.get("sms_pumping_risk") or {}
+            carrier_name = (
+                lti.get("carrier_name")
+                or lti.get("carrier")
+                or lti.get("mobile_country_code")
+            )
+            risk_score = (
+                sms_risk.get("sms_pumping_risk_score")
+                or sms_risk.get("risk_score")
+                or sms_risk.get("score")
+            )
+            try:
+                risk_score = int(float(str(risk_score))) if risk_score is not None else None
+            except Exception:
+                risk_score = None
+            return {
+                "valid": data.get("valid"),
+                "phone_number": data.get("phone_number"),
+                "national_format": data.get("national_format"),
+                "country_code": data.get("country_code"),
+                "carrier": carrier_name,
+                "line_type": lti.get("type"),
+                "mobile_country_code": lti.get("mobile_country_code"),
+                "mobile_network_code": lti.get("mobile_network_code"),
+                "sms_pumping_risk_score": risk_score,
+                "sms_pumping_risk": sms_risk,
+                "auth_mode": auth_mode,
+            }
+        logger.debug(f"[phone] twilio lookup status={r.status_code} body={r.text[:250]}")
+    except Exception as e:
+        logger.debug(f"[phone] twilio lookup error: {e}")
+    return {}
+
+
 def _scrape_truecaller_web(clean_number: str, country_alpha: str) -> dict:
     """Nombre de caller desde Truecaller web (fallback sin API key). Vía proxy."""
     result = {"name": None, "spam_score": 0, "reported": False}
     try:
-        r = requests.get(
+        html = _fetch_html(
             f"https://www.truecaller.com/search/{country_alpha.lower()}/{clean_number}",
-            headers={**_HEADERS, "Accept-Language": "es-MX,es;q=0.9"},
-            timeout=10, allow_redirects=True, proxies=_PROXIES,
+            timeout=10,
+            accept_language="es-MX,es;q=0.9",
         )
-        if r.status_code == 200:
-            m = re.search(r'"name"\s*:\s*"([^"]{2,80})"', r.text)
+        if html:
+            m = re.search(r'"name"\s*:\s*"([^"]{2,80})"', html)
             if m:
                 name = m.group(1).strip()
                 if name and not any(w in name.lower() for w in ["truecaller", "unknown", "caller"]):
                     result["name"] = name
-            low = (r.text or "").lower()
+            low = html.lower()
             m_score = re.search(r'(?:spam\s*score|spamScore)[^0-9]{0,20}(\d{1,3})', low)
             if m_score:
                 try:
@@ -157,20 +278,17 @@ def _check_whatsapp_registered(clean_number: str):
 def _scrape_spamcalls(clean_number: str) -> dict:
     result = {"name": None, "reports": 0, "labels": []}
     try:
-        r = requests.get(
-            f"https://spamcalls.net/en/number/{clean_number}",
-            headers=_HEADERS, timeout=8, proxies=_PROXIES,
-        )
-        if r.status_code == 200:
-            m_name = re.search(r'caller["\s]*(?:name|id)[^:]*:\s*"?([^"<]{2,50})"?', r.text, re.IGNORECASE)
+        html = _fetch_html(f"https://spamcalls.net/en/number/{clean_number}", timeout=8)
+        if html:
+            m_name = re.search(r'caller["\s]*(?:name|id)[^:]*:\s*"?([^"<]{2,50})"?', html, re.IGNORECASE)
             if m_name:
                 n = m_name.group(1).strip()
                 if n and "unknown" not in n.lower():
                     result["name"] = n
-            m_count = re.search(r'(\d+)\s*(?:report|reporte)', r.text, re.IGNORECASE)
+            m_count = re.search(r'(\d+)\s*(?:report|reporte)', html, re.IGNORECASE)
             if m_count:
                 result["reports"] = int(m_count.group(1))
-            labels = re.findall(r'(?:label|type|tag)["\s]*:\s*"([^"]{2,40})"', r.text, re.IGNORECASE)
+            labels = re.findall(r'(?:label|type|tag)["\s]*:\s*"([^"]{2,40})"', html, re.IGNORECASE)
             result["labels"] = list({l.strip() for l in labels if l.strip()})[:5]
     except Exception as e:
         logger.debug(f"[phone] spamcalls error: {e}")
@@ -180,18 +298,15 @@ def _scrape_spamcalls(clean_number: str) -> dict:
 def _scrape_tellows(clean_number: str) -> dict:
     result = {"score": None, "reports": 0, "caller_type": None}
     try:
-        r = requests.get(
-            f"https://www.tellows.com/num/{clean_number}",
-            headers=_HEADERS, timeout=8, proxies=_PROXIES,
-        )
-        if r.status_code == 200:
-            m_score = re.search(r'"tellowsScore"\s*:\s*(\d+)', r.text)
+        html = _fetch_html(f"https://www.tellows.com/num/{clean_number}", timeout=8)
+        if html:
+            m_score = re.search(r'"tellowsScore"\s*:\s*(\d+)', html)
             if m_score:
                 result["score"] = int(m_score.group(1))
-            m_reports = re.search(r'(\d+)\s*(?:calls|anrufe|llamadas)', r.text, re.IGNORECASE)
+            m_reports = re.search(r'(\d+)\s*(?:calls|anrufe|llamadas)', html, re.IGNORECASE)
             if m_reports:
                 result["reports"] = int(m_reports.group(1))
-            m_type = re.search(r'"callerType"\s*:\s*"([^"]{2,50})"', r.text)
+            m_type = re.search(r'"callerType"\s*:\s*"([^"]{2,50})"', html)
             if m_type:
                 result["caller_type"] = m_type.group(1)
     except Exception as e:
@@ -334,6 +449,8 @@ def analyze_phone(number: str) -> dict:
     missing_keys = []
     if not RAPIDAPI_KEY:  missing_keys.append("RAPIDAPI_KEY")
     if not NUMVERIFY_KEY: missing_keys.append("NUMVERIFY_KEY")
+    if not ((TWILIO_API_KEY and TWILIO_API_SECRET) or (TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN)):
+        missing_keys.append("TWILIO_LOOKUP")
 
     try:
         parsed = phonenumbers.parse(number, None)
@@ -364,6 +481,7 @@ def analyze_phone(number: str) -> dict:
     line_type_str = _LINE_TYPES.get(ntype, "Desconocido")
 
     nv_data      = _numverify(e164)
+    twilio_data  = _twilio_lookup(e164)
     national_digits = re.sub(r'\D', '', national)
     tc_api       = _rapidapi_truecaller(re.sub(r'\D', '', national), alpha)
     tc_web       = _scrape_truecaller_web(clean, alpha) if not tc_api.get("name") else {}
@@ -372,7 +490,18 @@ def analyze_phone(number: str) -> dict:
     country_data = _country_info(alpha)
     region       = _detect_region(cc, nat_num_str)
     region_c     = _region_coords(region) if region else None
-    carrier_ip   = _carrier_ip(carrier_name)
+    carrier_resolved = (
+        twilio_data.get("carrier")
+        or carrier_name
+        or nv_data.get("carrier")
+        or ""
+    )
+    line_type_resolved = (
+        twilio_data.get("line_type")
+        or nv_data.get("line_type")
+        or line_type_str
+    )
+    carrier_ip   = _carrier_ip(carrier_resolved)
     carrier_geo  = get_ip_geolocation(carrier_ip) if carrier_ip else None
 
     caller_name   = tc_api.get("name") or tc_web.get("name") or spam_data.get("name")
@@ -393,14 +522,34 @@ def analyze_phone(number: str) -> dict:
     )
 
     risk_flags = []
-    if _is_voip_carrier(carrier_name):
+    if _is_voip_carrier(carrier_resolved):
         risk_flags.append("VOIP / Número Virtual")
-    if not carrier_name:
+    if not carrier_resolved:
         risk_flags.append("Operador desconocido (posible portación)")
     if is_reported:
         risk_flags.append(f"Reportado como spam ({spam_score_final} reportes)")
-    if line_type_str in ("Número Gratuito", "Tarifa Premium"):
-        risk_flags.append(f"Tipo de línea inusual: {line_type_str}")
+    if line_type_resolved in ("Número Gratuito", "Tarifa Premium", "toll-free", "premium"):
+        risk_flags.append(f"Tipo de línea inusual: {line_type_resolved}")
+    twilio_risk_score = twilio_data.get("sms_pumping_risk_score")
+    if twilio_risk_score is not None:
+        if twilio_risk_score >= 75:
+            risk_flags.append(f"Twilio SMS pumping risk alto ({twilio_risk_score})")
+        elif twilio_risk_score >= 40:
+            risk_flags.append(f"Twilio SMS pumping risk medio ({twilio_risk_score})")
+
+    data_sources = []
+    if twilio_data:
+        data_sources.append("Twilio Lookup")
+    if nv_data:
+        data_sources.append("Numverify")
+    if tc_api:
+        data_sources.append("Truecaller API")
+    if tc_web:
+        data_sources.append("Truecaller Web")
+    if spam_data.get("reports") or spam_data.get("name"):
+        data_sources.append("SpamCalls")
+    if tellows_data.get("score") or tellows_data.get("reports"):
+        data_sources.append("Tellows")
 
     spam_type = None
     if is_reported:
@@ -421,12 +570,12 @@ def analyze_phone(number: str) -> dict:
         "country_code":  alpha,
         "missing_keys":  missing_keys,
 
-        "carrier":       carrier_name or nv_data.get("carrier") or "Desconocido / Portado",
-        "carrier_type":  "VOIP" if _is_voip_carrier(carrier_name) else "Convencional",
-        "type":          nv_data.get("line_type") or line_type_str,
+        "carrier":       carrier_resolved or "Desconocido / Portado",
+        "carrier_type":  "VOIP" if _is_voip_carrier(carrier_resolved) else "Convencional",
+        "type":          line_type_resolved,
         "timezone":      ", ".join(time_zones) if time_zones else "No disponible",
 
-        "is_valid":    bool(nv_data.get("valid")) if nv_data else phonenumbers.is_valid_number(parsed),
+        "is_valid":    bool(twilio_data.get("valid")) if twilio_data.get("valid") is not None else (bool(nv_data.get("valid")) if nv_data else phonenumbers.is_valid_number(parsed)),
         "is_possible": phonenumbers.is_possible_number(parsed),
 
         "caller_name":   caller_name,
@@ -445,6 +594,15 @@ def analyze_phone(number: str) -> dict:
 
         "risk_flags": risk_flags,
         "risk_level": "ALTO" if len(risk_flags) >= 2 else "MEDIO" if risk_flags else "BAJO",
+        "twilio": {
+            "enabled": bool(twilio_data),
+            "auth_mode": twilio_data.get("auth_mode"),
+            "line_type": twilio_data.get("line_type"),
+            "carrier": twilio_data.get("carrier"),
+            "sms_pumping_risk_score": twilio_risk_score,
+            "raw": twilio_data.get("sms_pumping_risk") or {},
+        },
+        "data_sources": data_sources,
 
         "country_data": country_data,
         "region":       region,

@@ -17,7 +17,7 @@ import re
 import concurrent.futures
 import time
 import unicodedata
-from config import logger
+from config import logger, SERPAPI_KEY
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -27,6 +27,17 @@ HEADERS = {
 
 _CACHE = {}
 _TTL = 600
+_SOCIAL_DOMAINS = {
+    "linkedin.com": "LinkedIn",
+    "facebook.com": "Facebook",
+    "instagram.com": "Instagram",
+    "tiktok.com": "TikTok",
+    "x.com": "X",
+    "twitter.com": "X",
+    "github.com": "GitHub",
+    "reddit.com": "Reddit",
+    "t.me": "Telegram",
+}
 
 
 def _normalize(text):
@@ -164,6 +175,91 @@ def _google_dorks(full_name, name, surname, context=None):
     }
 
 
+def _extract_username_from_url(url: str) -> str | None:
+    if not url:
+        return None
+    cleaned = re.sub(r"https?://(www\.)?", "", url, flags=re.I).split("?", 1)[0].rstrip("/")
+    parts = [p for p in cleaned.split("/") if p]
+    if len(parts) < 2:
+        return None
+    candidate = parts[-1].lstrip("@")
+    candidate = re.sub(r"\.(html|php)$", "", candidate, flags=re.I)
+    if re.match(r"^[A-Za-z0-9._-]{3,40}$", candidate):
+        return candidate
+    return None
+
+
+def _serpapi_people_hits(full_name: str, context: str | None = None) -> dict:
+    if not SERPAPI_KEY:
+        return {"hits": [], "candidate_profiles": []}
+
+    query = f'"{full_name}"'
+    if context:
+        query += f' "{context}"'
+
+    try:
+        r = requests.get(
+            "https://serpapi.com/search.json",
+            params={
+                "engine": "google",
+                "q": query,
+                "api_key": SERPAPI_KEY,
+                "num": 10,
+                "hl": "es",
+                "gl": "mx",
+            },
+            headers=HEADERS,
+            timeout=18,
+        )
+        if r.status_code != 200:
+            logger.debug(f"people_search SerpAPI status={r.status_code}")
+            return {"hits": [], "candidate_profiles": []}
+
+        payload = r.json()
+        hits = []
+        candidate_profiles = []
+        seen_urls = set()
+
+        for item in payload.get("organic_results", [])[:10]:
+            link = (item.get("link") or "").strip()
+            title = (item.get("title") or "").strip()
+            snippet = (item.get("snippet") or "").strip()
+            if link and link not in seen_urls:
+                seen_urls.add(link)
+                hits.append({
+                    "title": title or link,
+                    "url": link,
+                    "snippet": snippet[:220],
+                })
+            low = link.lower()
+            site = None
+            for domain, label in _SOCIAL_DOMAINS.items():
+                if domain in low:
+                    site = label
+                    break
+            if site and link:
+                candidate_profiles.append({
+                    "site": site,
+                    "url": link,
+                    "username": _extract_username_from_url(link) or "?",
+                    "title": title,
+                })
+
+        dedup_profiles = []
+        seen_profiles = set()
+        for profile in candidate_profiles:
+            key = (profile["site"], profile["url"])
+            if key in seen_profiles:
+                continue
+            seen_profiles.add(key)
+            dedup_profiles.append(profile)
+
+        return {"hits": hits[:8], "candidate_profiles": dedup_profiles[:10]}
+    except Exception as e:
+        logger.debug(f"people_search SerpAPI error: {e}")
+        return {"hits": [], "candidate_profiles": []}
+
+
 def search_people(full_input):
     raw = (full_input or "").strip()
     context = None
@@ -186,6 +282,7 @@ def search_people(full_input):
         return entry[1]
 
     verified = search_verifiable_profiles(name, surname)
+    serp = _serpapi_people_hits(full, context=context)
 
     result = {
         "full_name":          full,
@@ -193,6 +290,8 @@ def search_people(full_input):
         "surname":            surname,
         "variants_checked":   generate_username_variants(name, surname)[:8],
         "social_profiles":    verified,            # solo perfiles CONFIRMADOS
+        "candidate_profiles": serp.get("candidate_profiles", []),
+        "serpapi_hits":       serp.get("hits", []),
         "search_networks":    SEARCH_ONLY_NETWORKS,  # estos van por dorks
         "osint_links":        _people_search_links(full),
         "dorks":              {k: v for k, v in _google_dorks(full, name, surname, context=context).items() if v},

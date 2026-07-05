@@ -163,6 +163,16 @@ def format_phone_result(data: dict) -> str:
     else:
         txt += "✅ Sin reportes de spam en bases consultadas\n"
 
+    twilio = data.get("twilio") or {}
+    if twilio.get("enabled"):
+        txt += render_section("TWILIO LOOKUP")
+        if twilio.get("carrier"):
+            txt += f"📡 <b>Carrier Twilio:</b> {twilio['carrier']}\n"
+        if twilio.get("line_type"):
+            txt += f"📱 <b>Line type Twilio:</b> {twilio['line_type']}\n"
+        if twilio.get("sms_pumping_risk_score") is not None:
+            txt += f"🚨 <b>SMS pumping risk:</b> {twilio['sms_pumping_risk_score']}/100\n"
+
     pres = data.get("presence", {}) or {}
     if pres:
         txt += render_section("PRESENCIA (HEURÍSTICA)")
@@ -244,6 +254,10 @@ def format_phone_result(data: dict) -> str:
     if links:
         txt += render_section("VERIFICAR EN")
         txt += " | ".join(f"<a href='{l['url']}'>{l['name']}</a>" for l in links) + "\n"
+
+    if data.get("data_sources"):
+        txt += render_section("FUENTES")
+        txt += " | ".join(data["data_sources"][:8]) + "\n"
 
     socials = data.get("social_search_links", [])
     if socials:
@@ -741,6 +755,14 @@ def format_people_result(data: dict) -> str:
         txt += render_section("LINKEDIN")
         for url in li.get("profiles", [])[:3]:
             txt += f"🔗 <a href='{url}'>{url}</a>\n"
+
+    serp_hits = data.get("serpapi_hits", [])
+    if serp_hits:
+        txt += render_section("HALLAZGOS WEB")
+        for hit in serp_hits[:5]:
+            txt += f"🌐 <a href='{hit['url']}'>{hit['title']}</a>\n"
+            if hit.get("snippet"):
+                txt += f"   <i>{hit['snippet']}</i>\n"
 
     dorks = data.get("dorks", {})
     if dorks:
