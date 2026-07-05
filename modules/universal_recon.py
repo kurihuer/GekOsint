@@ -98,7 +98,23 @@ def _collect_identity_signals(data: dict, input_text: str, input_type: str) -> d
     domains: list[str] = []
     profile_urls: list[str] = []
 
-    if input_type == "name":
+    bundle = data.get("input_bundle") or {}
+    bundle_types = bundle.get("types") or {}
+
+    if input_type == "multi" and bundle_types:
+        for value in bundle_types.get("name") or []:
+            _append_unique(names, value, lower=False)
+        for value in bundle_types.get("username") or []:
+            _append_unique(usernames, value)
+        for value in bundle_types.get("email") or []:
+            _append_unique(emails, value)
+            if "@" in value:
+                _append_unique(domains, value.split("@", 1)[-1])
+        for value in bundle_types.get("phone") or []:
+            _append_unique(phones, value, lower=False)
+        for value in bundle_types.get("domain") or []:
+            _append_unique(domains, value)
+    elif input_type == "name":
         _append_unique(names, input_text, lower=False)
     elif input_type == "username":
         _append_unique(usernames, input_text)
@@ -227,6 +243,70 @@ def _detect_input_type(text: str) -> str:
         return "username"
     
     return "unknown"
+
+
+def _split_composite_inputs(text: str) -> list[str]:
+    raw = (text or "").strip()
+    if not raw:
+        return []
+    parts = re.split(r"[,;\n\r]+", raw)
+    cleaned: list[str] = []
+    for part in parts:
+        value = re.sub(r"\s+", " ", part or "").strip(" -|\t")
+        if value and value not in cleaned:
+            cleaned.append(value)
+    return cleaned
+
+
+def _parse_input_bundle(text: str) -> dict:
+    parts = _split_composite_inputs(text)
+    if not parts:
+        return {
+            "mode": "single",
+            "primary_type": "unknown",
+            "parts": [],
+            "types": {},
+            "selected": {},
+        }
+
+    typed_parts: dict[str, list[str]] = {}
+    unknown_parts: list[str] = []
+    ordered_types: list[str] = []
+
+    for part in parts:
+        detected = _detect_input_type(part)
+        if detected == "unknown":
+            unknown_parts.append(part)
+            continue
+        typed_parts.setdefault(detected, [])
+        if part not in typed_parts[detected]:
+            typed_parts[detected].append(part)
+        if detected not in ordered_types:
+            ordered_types.append(detected)
+
+    if unknown_parts:
+        typed_parts["unknown"] = unknown_parts
+
+    mode = "multi" if len(parts) > 1 and bool(ordered_types) else "single"
+    primary_type = ordered_types[0] if ordered_types else "unknown"
+
+    selected = {
+        "phone": (typed_parts.get("phone") or [None])[0],
+        "email": (typed_parts.get("email") or [None])[0],
+        "username": (typed_parts.get("username") or [None])[0],
+        "ip": (typed_parts.get("ip") or [None])[0],
+        "name": (typed_parts.get("name") or [None])[0],
+        "domain": (typed_parts.get("domain") or [None])[0],
+    }
+
+    return {
+        "mode": mode,
+        "primary_type": "multi" if mode == "multi" else primary_type,
+        "parts": parts,
+        "types": typed_parts,
+        "selected": selected,
+        "ordered_types": ordered_types,
+    }
 
 
 async def _parallel_modules(
@@ -552,6 +632,7 @@ def format_universal_report(data: dict, input_text: str, input_type: str) -> str
     """
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
+    bundle = data.get("input_bundle") or {}
     header = (
         f"🔍 <b>UNIVERSAL OSINT RECON</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
@@ -559,6 +640,14 @@ def format_universal_report(data: dict, input_text: str, input_type: str) -> str
         f"📋 <b>Detectado como:</b> {input_type.upper()}\n"
         f"🕐 <b>Fecha:</b> {timestamp}\n\n"
     )
+    if input_type == "multi" and bundle.get("types"):
+        counts = []
+        for key in ("phone", "email", "username", "name", "domain", "ip"):
+            values = bundle["types"].get(key) or []
+            if values:
+                counts.append(f"{key.upper()} x{len(values)}")
+        if counts:
+            header += f"🧩 <b>Entradas compuestas:</b> {' | '.join(counts)}\n\n"
 
     sections: list[str] = []
     ok_modules: list[str] = []
@@ -707,6 +796,14 @@ def format_universal_report(data: dict, input_text: str, input_type: str) -> str
     summary_lines = []
     if ok_modules:
         summary_lines.append(f"✅ <b>Módulos con datos:</b> {', '.join(ok_modules)}")
+    if input_type == "multi" and bundle.get("types"):
+        pivots = []
+        for key in ("phone", "email", "username", "name", "domain", "ip"):
+            values = bundle["types"].get(key) or []
+            if values:
+                pivots.append(f"{key}: " + " | ".join(f"<code>{escape(v)}</code>" for v in values[:3]))
+        if pivots:
+            summary_lines.append("🧾 <b>Pivotes usados:</b> " + " ; ".join(pivots))
     if data.get("derived_name"):
         summary_lines.append(f"🧩 <b>Pivote derivado:</b> nombre detectado <code>{data['derived_name']}</code>")
     if data.get("derived_username"):
@@ -754,21 +851,20 @@ async def run_universal(text: str, user_id: int = 0) -> tuple[str, dict, str]:
     Ejecuta Universal Recon end-to-end.
     Retorna: (input_type, results_dict, html)
     """
-    input_type = _detect_input_type(text)
-
-    # Determinar dominio cuando aplica
-    dom = None
-    if input_type == "domain":
-        dom = text.strip().lower()
+    bundle = _parse_input_bundle(text)
+    input_type = bundle["primary_type"]
+    selected = bundle.get("selected") or {}
+    dom = selected.get("domain")
 
     results = await _parallel_modules(
         user_id=user_id,
-        phone=text if input_type == "phone" else None,
-        email=text if input_type == "email" else None,
-        username=text if input_type == "username" else None,
-        ip=text if input_type == "ip" else None,
-        name=text if input_type == "name" else None,
+        phone=selected.get("phone") if input_type in ("phone", "multi") else None,
+        email=selected.get("email") if input_type in ("email", "multi") else None,
+        username=selected.get("username") if input_type in ("username", "multi") else None,
+        ip=selected.get("ip") if input_type in ("ip", "multi") else None,
+        name=selected.get("name") if input_type in ("name", "multi") else None,
         domain=dom,
     )
+    results["input_bundle"] = bundle
     html = format_universal_report(results, text, input_type)
     return input_type, results, html
