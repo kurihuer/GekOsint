@@ -531,8 +531,14 @@ def analyze_phone(number: str) -> dict:
     )
     carrier_ip   = _carrier_ip(carrier_resolved)
     carrier_geo  = get_ip_geolocation(carrier_ip) if carrier_ip else None
-    if not _carrier_geo_consistent(carrier_resolved, carrier_geo):
-        carrier_geo = None
+    if carrier_geo and "error" not in carrier_geo:
+        same_country = not alpha or carrier_geo.get("country_code") == alpha
+        matched = _carrier_geo_consistent(carrier_resolved, carrier_geo)
+        carrier_geo["reference_carrier"] = carrier_resolved
+        carrier_geo["carrier_match"] = matched
+        carrier_geo["reference_confidence"] = "matched" if matched else ("country_only" if same_country else "low")
+        if not same_country:
+            carrier_geo = None
 
     caller_name   = tc_api.get("name") or tc_web.get("name") or spam_data.get("name")
     caller_source = "Truecaller API" if tc_api.get("name") else \

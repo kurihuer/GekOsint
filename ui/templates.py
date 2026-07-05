@@ -245,10 +245,18 @@ def format_phone_result(data: dict) -> str:
         txt += f"🏢 <b>ISP registrado:</b> <code>{cgeo.get('ip', data.get('carrier_ip', 'N/A'))}</code>\n"
         txt += f"🏳️ <b>País del servidor:</b> {cgeo.get('country', 'N/A')}\n"
         txt += f"🏙️ <b>Ciudad del servidor:</b> {cgeo.get('city', 'N/A')}\n"
-        txt += f"🔗 <b>ISP:</b> {cgeo.get('isp', 'N/A')}\n"
+        if cgeo.get("reference_carrier"):
+            txt += f"📡 <b>Operadora de referencia:</b> {cgeo.get('reference_carrier')}\n"
+        if cgeo.get("carrier_match"):
+            txt += f"🔗 <b>ASN/ISP coincidente:</b> {cgeo.get('isp', 'N/A')}\n"
+        elif cgeo.get("isp"):
+            txt += f"🔗 <b>ASN/ISP observado:</b> {cgeo.get('isp', 'N/A')}\n"
         if cgeo.get("map_url"):
             txt += f"<a href='{cgeo['map_url']}'>Ver en Maps</a>\n"
-        txt += "<i>⚠️ Esta NO es la ubicación del usuario — es la del servidor del operador.</i>\n"
+        if cgeo.get("reference_confidence") == "country_only":
+            txt += "<i>⚠️ La ubicación y el mapa son una referencia útil de red. El ASN/ISP observado puede pertenecer a tránsito o a un tercero, no necesariamente a la marca comercial del operador.</i>\n"
+        else:
+            txt += "<i>⚠️ Esta NO es la ubicación del usuario — es la del servidor o nodo de referencia del operador.</i>\n"
 
     # ── Información Técnica adicional ────────────────────────────────────────
     txt += render_section("DETALLES TÉCNICOS")
