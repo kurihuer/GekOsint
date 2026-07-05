@@ -37,6 +37,8 @@ from datetime import datetime
 import re
 import asyncio
 
+TELEGRAM_HTML_LIMIT = 3800
+
 # ── Mensajes de acceso ────────────────────────────────────────────────────────
 DENIED_MSG = (
     "🔒 <b>ACCESO DENEGADO</b>\n"
@@ -59,6 +61,93 @@ RATE_LIMIT_MSG = (
 
 def is_authorized(user_id: int) -> bool:
     return user_id in get_all_users()
+
+
+def _split_html_message(text: str, max_len: int = TELEGRAM_HTML_LIMIT) -> list[str]:
+    text = text or ""
+    if len(text) <= max_len:
+        return [text]
+
+    chunks: list[str] = []
+    current = ""
+
+    def flush() -> None:
+        nonlocal current
+        if current:
+            chunks.append(current)
+            current = ""
+
+    blocks = re.split(r"(\n\n+)", text)
+    for block in blocks:
+        if not block:
+            continue
+        candidate = current + block
+        if len(candidate) <= max_len:
+            current = candidate
+            continue
+        flush()
+        if len(block) <= max_len:
+            current = block
+            continue
+
+        lines = block.splitlines(keepends=True)
+        for line in lines:
+            candidate = current + line
+            if len(candidate) <= max_len:
+                current = candidate
+                continue
+            flush()
+            if len(line) <= max_len:
+                current = line
+                continue
+            start = 0
+            while start < len(line):
+                piece = line[start:start + max_len]
+                chunks.append(piece)
+                start += max_len
+
+    flush()
+    return [c for c in chunks if c]
+
+
+async def _edit_or_send_html_chunks(
+    *,
+    msg,
+    bot,
+    chat_id: int,
+    text: str,
+    reply_markup=None,
+    disable_web_page_preview: bool = True,
+) -> None:
+    chunks = _split_html_message(text)
+    if len(chunks) == 1:
+        await msg.edit_text(
+            chunks[0],
+            parse_mode="HTML",
+            disable_web_page_preview=disable_web_page_preview,
+            reply_markup=reply_markup,
+        )
+        return
+
+    await msg.edit_text(
+        chunks[0],
+        parse_mode="HTML",
+        disable_web_page_preview=disable_web_page_preview,
+    )
+    for chunk in chunks[1:-1]:
+        await bot.send_message(
+            chat_id,
+            chunk,
+            parse_mode="HTML",
+            disable_web_page_preview=disable_web_page_preview,
+        )
+    await bot.send_message(
+        chat_id,
+        chunks[-1],
+        parse_mode="HTML",
+        disable_web_page_preview=disable_web_page_preview,
+        reply_markup=reply_markup,
+    )
 
 
 async def check_access(update: Update, context: ContextTypes.DEFAULT_TYPE = None) -> bool:
@@ -689,10 +778,13 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "universal_results": context.user_data.get("universal_results")
         }
         context.user_data.pop("mode", None)
-        await msg.edit_text(
-            response, parse_mode="HTML",
+        await _edit_or_send_html_chunks(
+            msg=msg,
+            bot=context.bot,
+            chat_id=update.effective_chat.id,
+            text=response,
+            reply_markup=back_btn(show_export=True, show_pdf=True),
             disable_web_page_preview=True,
-            reply_markup=back_btn(show_export=True, show_pdf=True)
         )
 
     except Exception as e:
@@ -779,10 +871,13 @@ async def document_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         context.user_data["last_result"] = response
         context.user_data.pop("mode", None)
-        await msg.edit_text(
-            response, parse_mode="HTML",
+        await _edit_or_send_html_chunks(
+            msg=msg,
+            bot=context.bot,
+            chat_id=update.effective_chat.id,
+            text=response,
+            reply_markup=back_btn(show_export=True),
             disable_web_page_preview=True,
-            reply_markup=back_btn(show_export=True)
         )
 
     except Exception as e:
