@@ -475,10 +475,11 @@ def build_phone_search_bundle(e164: str, clean: str, national_digits: str) -> di
     e164_q = requests.utils.quote(e164)
     clean_q = requests.utils.quote(clean)
     national_q = requests.utils.quote(national_digits)
+    facebook_q = national_q or clean_q
     exact_blob = f"%22{clean_q}%22+OR+%22{e164_q}%22+OR+%22{national_q}%22"
 
     direct_platform_links = [
-        {"name": "Facebook", "url": f"https://www.facebook.com/search/top/?q={clean_q}"},
+        {"name": "Facebook", "url": f"https://www.facebook.com/search/top/?q={facebook_q}"},
         {"name": "Instagram", "url": f"https://www.instagram.com/explore/search/keyword/?q={clean_q}"},
         {"name": "TikTok", "url": f"https://www.tiktok.com/search?q={clean_q}"},
         {"name": "X", "url": f"https://x.com/search?q=%22{clean_q}%22+OR+%22{e164_q}%22&src=typed_query"},
@@ -497,7 +498,7 @@ def build_phone_search_bundle(e164: str, clean: str, national_digits: str) -> di
             "platform": "Facebook",
             "status": "limitado",
             "direct_label": "Búsqueda interna",
-            "direct_url": f"https://www.facebook.com/search/top/?q={clean_q}",
+            "direct_url": f"https://www.facebook.com/search/top/?q={facebook_q}",
             "alternatives": [
                 {
                     "label": "Posts",
