@@ -12,7 +12,7 @@ from ui.templates import (
 )
 from modules.ip_lookup import get_ip_info
 from modules.phone_lookup import analyze_phone
-from modules.username_search import search_username
+from modules.username_search import username_recon
 from modules.email_analysis import analyze_email
 from modules.tracking import generate_tracking_page
 from modules.exif_extract import get_exif, detect_face_heuristic
@@ -650,8 +650,14 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             response = format_phone_result_with_ip(data)
 
         elif mode == "menu_user":
-            found, telegram_data = await asyncio.to_thread(search_username, text.strip())
-            response = format_username_result(text.strip(), found, telegram_data)
+            data = await username_recon(text.strip(), update.effective_user.id)
+            response = format_username_result(
+                data.get("username", text.strip()),
+                data.get("found", []),
+                data.get("telegram"),
+                data.get("socials"),
+                data.get("manual_social_links"),
+            )
 
         elif mode == "menu_email":
             data = await asyncio.to_thread(analyze_email, text.strip())

@@ -78,7 +78,29 @@ def _merge_username_results(current: dict | None, new: dict | None) -> dict:
     if isinstance(new.get("telegram"), dict) and new["telegram"].get("exists"):
         telegram = new["telegram"]
 
-    return {"found": found, "telegram": telegram}
+    socials = {}
+    socials.update(current.get("socials") or {})
+    socials.update(new.get("socials") or {})
+
+    manual_social_links: list[dict] = []
+    seen_links: set[tuple[str, str]] = set()
+    for item in (current.get("manual_social_links") or []) + (new.get("manual_social_links") or []):
+        if not isinstance(item, dict):
+            continue
+        key = (str(item.get("platform") or ""), str(item.get("url") or ""))
+        if not key[0] or not key[1] or key in seen_links:
+            continue
+        seen_links.add(key)
+        manual_social_links.append({"platform": key[0], "url": key[1]})
+
+    username = new.get("username") or current.get("username")
+    return {
+        "username": username,
+        "found": found,
+        "telegram": telegram,
+        "socials": socials,
+        "manual_social_links": manual_social_links,
+    }
 
 
 def _append_unique(values: list[str], candidate: str | None, *, lower: bool = True) -> None:
@@ -591,9 +613,8 @@ async def _fetch_email_recon(email: str) -> dict:
 async def _fetch_username_search(username: str) -> dict:
     """Fetch username search usando módulo existente."""
     try:
-        from modules.username_search import search_username
-        found, tg = await asyncio.to_thread(search_username, username)
-        return {"found": found, "telegram": tg}
+        from modules.username_search import username_recon
+        return await username_recon(username)
     except Exception as e:
         return {"error": str(e)}
 
@@ -732,8 +753,16 @@ def format_universal_report(data: dict, input_text: str, input_type: str) -> str
         ud = data["username_search"]
         if "error" not in ud:
             try:
-                uname = (ud.get("telegram") or {}).get("username") or input_text
-                sections.append(format_username_result(uname, ud.get("found", []), ud.get("telegram")))
+                uname = ud.get("username") or (ud.get("telegram") or {}).get("username") or input_text
+                sections.append(
+                    format_username_result(
+                        uname,
+                        ud.get("found", []),
+                        ud.get("telegram"),
+                        ud.get("socials"),
+                        ud.get("manual_social_links"),
+                    )
+                )
                 track_ok("Username Search")
             except Exception:
                 pass

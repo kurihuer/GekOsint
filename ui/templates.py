@@ -363,7 +363,64 @@ def format_phone_result_with_ip(data: dict) -> str:
 
 # ── Username Search ───────────────────────────────────────────────────────────
 
-def format_username_result(username: str, found: list, telegram_data: dict = None) -> str:
+_USERNAME_CATEGORY_MAP = {
+    "Redes": {"Pinterest", "Tumblr", "Twitch", "Mastodon"},
+    "Desarrollo": {"GitHub", "GitLab", "Dev.to", "Codepen", "Replit", "HackerRank", "LeetCode", "Kaggle", "npm", "PyPI", "Docker Hub", "Bitbucket", "Keybase"},
+    "Comunidades": {"Reddit", "HackerNews", "Quora", "ProductHunt", "Steam", "Chess.com", "Lichess"},
+    "Contenido": {"Spotify", "SoundCloud", "Vimeo", "Flickr", "Dailymotion", "Bandcamp", "Last.fm", "Medium", "WordPress", "Blogger", "Substack", "About.me", "Patreon", "BuyMeACoffee", "Ko-fi", "Dribbble", "Behance", "500px", "Linktree"},
+}
+
+
+def _group_username_profiles(found: list) -> dict[str, list[tuple[str, str]]]:
+    grouped = {name: [] for name in ("Redes", "Desarrollo", "Comunidades", "Contenido", "Otros")}
+    for item in found or []:
+        if not isinstance(item, (list, tuple)) or len(item) != 2:
+            continue
+        site, url = str(item[0]), str(item[1])
+        placed = False
+        for category, sites in _USERNAME_CATEGORY_MAP.items():
+            if site in sites:
+                grouped[category].append((site, url))
+                placed = True
+                break
+        if not placed:
+            grouped["Otros"].append((site, url))
+    return grouped
+
+
+def _render_verified_username_socials(username: str, socials: dict | None) -> str:
+    socials = socials or {}
+    rows: list[str] = []
+
+    ig = socials.get("instagram") or {}
+    if ig.get("found"):
+        rows.append(f"📷 <a href='https://www.instagram.com/{username}/'>Instagram</a>")
+
+    fb = socials.get("facebook") or {}
+    if fb.get("found"):
+        fb_url = f"https://www.facebook.com/{fb.get('user_id')}" if fb.get("user_id") else f"https://www.facebook.com/{username}"
+        rows.append(f"📘 <a href='{fb_url}'>Facebook</a>")
+
+    tt = socials.get("tiktok") or {}
+    if isinstance(tt, dict) and not tt.get("error") and tt.get("profile_url"):
+        rows.append(f"🎵 <a href='{tt['profile_url']}'>TikTok</a>")
+
+    if not rows:
+        return ""
+
+    txt = render_section("REDES SOCIALES VERIFICADAS")
+    txt += "\n".join(rows) + "\n"
+    txt += "<i>Estas redes provienen de módulos dedicados, no del checker HTTP genérico.</i>\n"
+    return txt
+
+
+def format_username_result(
+    username: str,
+    found: list,
+    telegram_data: dict = None,
+    socials: dict | None = None,
+    manual_social_links: list | None = None,
+) -> str:
     txt  = render_header("USERNAME SEARCH")
     txt += f"🔎 <b>Target:</b> <code>{username}</code>\n"
 
@@ -394,17 +451,33 @@ def format_username_result(username: str, found: list, telegram_data: dict = Non
             deep = f"tg://resolve?domain={tg.get('username','').lstrip('@')}"
             txt += f"<a href='{url}'>Abrir (Web)</a> | <a href='{deep}'>Abrir (App)</a>\n"
         else:
-            txt += "❌ <b>Estado:</b> No encontrado / Privado\n"
+            txt += "❌ <b>Estado:</b> No se confirmó un username público en Telegram\n"
 
-    if found:
-        txt += render_section(f"PERFILES CONFIRMADOS — {len(found)} encontrados")
-        for site, url in found:
-            txt += f"  ✅ <a href='{url}'>{site}</a>\n"
+    txt += _render_verified_username_socials(username, socials)
+
+    grouped = _group_username_profiles(found)
+    total_found = sum(len(items) for items in grouped.values())
+    if total_found:
+        txt += render_section(f"PERFILES CONFIRMADOS — {total_found} encontrados")
+        for category in ("Redes", "Desarrollo", "Comunidades", "Contenido", "Otros"):
+            items = grouped.get(category) or []
+            if not items:
+                continue
+            txt += f"🗂️ <b>{category}</b>\n"
+            for site, url in items[:8]:
+                txt += f"  ✅ <a href='{url}'>{site}</a>\n"
     else:
         txt += render_section("PERFILES CONFIRMADOS")
         txt += "Sin perfiles confirmados en esta búsqueda.\n"
 
     txt += "\n<i>Solo se muestran sitios verificados. Plataformas con muro de login o respuestas ambiguas se omiten para evitar falsos positivos.</i>\n"
+
+    manual_rows = [
+        (item.get("platform", "Red"), item.get("url"))
+        for item in (manual_social_links or [])
+        if isinstance(item, dict)
+    ]
+    txt += _render_link_row("REVISIÓN MANUAL EN REDES", manual_rows)
 
     txt += render_section("BÚSQUEDA AVANZADA")
     q = username

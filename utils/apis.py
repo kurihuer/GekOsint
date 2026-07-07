@@ -688,6 +688,46 @@ def generate_pdf_report(title: str, data: dict, input_text: str = "") -> bytes:
         if "username_search" in payload:
             user = payload["username_search"]
             story.append(Paragraph("👤 USERNAME SEARCH", header_style))
+            tg = user.get("telegram") or {}
+            if tg.get("exists"):
+                tg_items = [
+                    ["Telegram", tg.get("url", f"https://t.me/{tg.get('username', '')}")],
+                    ["Tipo", tg.get("type", "N/A")],
+                ]
+                if tg.get("name"):
+                    tg_items.append(["Nombre", str(tg.get("name"))[:80]])
+                t = Table(tg_items, colWidths=[120, 380])
+                t.setStyle(TableStyle([
+                    ('FONTSIZE', (0, 0), (-1, -1), 9),
+                    ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+                    ('GRID', (0, 0), (-1, -1), 0.25, Color(0.7, 0.7, 0.7)),
+                ]))
+                story.append(t)
+                story.append(Spacer(1, 8))
+
+            socials = user.get("socials") or {}
+            verified_socials = []
+            ig = socials.get("instagram") or {}
+            if ig.get("found"):
+                verified_socials.append(["Instagram", f"https://www.instagram.com/{user.get('username', resolved_input).lstrip('@')}/"])
+            fb = socials.get("facebook") or {}
+            if fb.get("found"):
+                fb_url = f"https://www.facebook.com/{fb.get('user_id')}" if fb.get("user_id") else f"https://www.facebook.com/{user.get('username', resolved_input).lstrip('@')}"
+                verified_socials.append(["Facebook", fb_url])
+            tt = socials.get("tiktok") or {}
+            if isinstance(tt, dict) and not tt.get("error") and tt.get("profile_url"):
+                verified_socials.append(["TikTok", tt.get("profile_url")])
+            if verified_socials:
+                t = Table([["Red Social", "URL"]] + verified_socials, colWidths=[100, 400])
+                t.setStyle(TableStyle([
+                    ('BACKGROUND', (0, 0), (-1, 0), darkblue),
+                    ('TEXTCOLOR', (0, 0), (-1, 0), Color(1, 1, 1)),
+                    ('FONTSIZE', (0, 0), (-1, -1), 8),
+                    ('PADDING', (0, 0), (-1, -1), 3),
+                ]))
+                story.append(t)
+                story.append(Spacer(1, 8))
+
             if user.get("found"):
                 found = user["found"]
                 items = [[site, url] for site, url in found[:10]]

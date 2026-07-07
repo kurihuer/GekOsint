@@ -18,6 +18,7 @@ Mejoras v6.2 (anti-falsos-positivos):
   - Resultado de alta confianza: si aparece en la lista, es porque se confirmó.
 """
 
+import asyncio
 import requests
 import concurrent.futures
 import re
@@ -127,6 +128,15 @@ _NOT_FOUND = [
     "we couldn't find", "this user has not", "no user found",
     "404", "couldn't find this account",
 ]
+
+_MANUAL_SOCIALS = {
+    "Instagram": "https://www.instagram.com/{username}/",
+    "Facebook": "https://www.facebook.com/{username}",
+    "TikTok": "https://www.tiktok.com/@{username}",
+    "X": "https://x.com/{username}",
+    "Threads": "https://www.threads.net/@{username}",
+    "LinkedIn": "https://www.linkedin.com/in/{username}",
+}
 
 
 def get_telegram_info(username):
@@ -326,3 +336,65 @@ def search_username(username):
 
     found.sort(key=lambda x: x[0])
     return found, telegram_data
+
+
+def _build_manual_social_links(username: str) -> list[dict]:
+    return [
+        {"platform": platform, "url": template.format(username=username)}
+        for platform, template in _MANUAL_SOCIALS.items()
+    ]
+
+
+async def username_recon(username: str, user_id: int | None = None) -> dict:
+    """Recon enriquecido para username con módulos sociales dedicados."""
+    normalized = (username or "").strip().replace("@", "")
+    if not normalized or len(normalized) < 2:
+        return {
+            "username": normalized,
+            "found": [],
+            "telegram": None,
+            "socials": {},
+            "manual_social_links": [],
+        }
+
+    found, telegram_data = await asyncio.to_thread(search_username, normalized)
+    socials: dict[str, dict] = {}
+
+    if len(normalized) >= 3:
+        try:
+            from modules.ig_osint import ig_lookup, check_ig_rate_limit
+            allowed, reason = check_ig_rate_limit(user_id) if user_id else (True, "")
+            socials["instagram"] = (
+                await ig_lookup(normalized)
+                if allowed else {"input": normalized, "rate_limited": True, "reason": reason}
+            )
+        except Exception as e:
+            logger.debug(f"Username recon IG error: {e}")
+
+        try:
+            from modules.fb_osint import fb_lookup, check_fb_rate_limit
+            allowed, reason = check_fb_rate_limit(user_id) if user_id else (True, "")
+            socials["facebook"] = (
+                await fb_lookup(normalized)
+                if allowed else {"input": normalized, "rate_limited": True, "reason": reason}
+            )
+        except Exception as e:
+            logger.debug(f"Username recon FB error: {e}")
+
+        try:
+            from modules.tiktok_osint import tiktok_lookup, check_tiktok_rate_limit
+            allowed, reason = check_tiktok_rate_limit(user_id) if user_id else (True, "")
+            socials["tiktok"] = (
+                await tiktok_lookup(normalized)
+                if allowed else {"username": normalized, "rate_limited": True, "reason": reason}
+            )
+        except Exception as e:
+            logger.debug(f"Username recon TikTok error: {e}")
+
+    return {
+        "username": normalized,
+        "found": found,
+        "telegram": telegram_data,
+        "socials": socials,
+        "manual_social_links": _build_manual_social_links(normalized),
+    }
