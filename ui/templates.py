@@ -52,6 +52,13 @@ def _clean_runtime_error(message: str) -> str:
     return msg[:220]
 
 
+def _render_link_row(title: str, items: list[tuple[str, str | None]]) -> str:
+    parts = [f"<a href='{url}'>{label}</a>" for label, url in items if url]
+    if not parts:
+        return ""
+    return render_section(title) + " | ".join(parts) + "\n"
+
+
 def _render_platform_searches(searches: list[dict]) -> str:
     if not searches:
         return ""
@@ -290,18 +297,23 @@ def format_phone_result(data: dict) -> str:
     txt += f"🔤 <b>Número E.164:</b> <code>{data.get('number', 'N/A')}</code>\n"
     txt += f"🎯 <b>Lada/Prefijo:</b> <code>{data.get('national', 'N/A').replace(' ', '')[:3]}...</code>\n"
 
-    # ── Contacto directo ──────────────────────────────────────────────────
-    txt += render_section("CONTACTO DIRECTO")
-    txt += f"<a href='{data.get('whatsapp', '#')}'>💬 WhatsApp</a>\n"
-    if data.get("telegram_search"):
-        txt += f"<a href='{data['telegram_search']}'>✈️ Telegram (búsqueda)</a>\n"
-        txt += "<i>Nota: Telegram no permite abrir chat por número con un link público si el usuario no tiene username o lo tiene privado.</i>\n"
+    # ── Contacto y verificación ───────────────────────────────────────────
+    contact_links = [("💬 WhatsApp", data.get("whatsapp"))]
+    if data.get("telegram_direct"):
+        contact_links.append(("✈️ Telegram", data.get("telegram_direct")))
+    elif data.get("telegram_search"):
+        contact_links.append(("✈️ Telegram búsqueda", data.get("telegram_search")))
+    txt += _render_link_row("CONTACTO Y ACCESO", contact_links)
+    if data.get("telegram_note"):
+        txt += f"<i>{data['telegram_note']}</i>\n"
+    elif data.get("telegram_search"):
+        txt += "<i>Telegram no permite abrir chat por número con un link público confiable si no hay username público.</i>\n"
 
-    # ── Links OSINT ───────────────────────────────────────────────────────
     links = data.get("osint_links", [])
-    if links:
-        txt += render_section("VERIFICAR EN")
-        txt += " | ".join(f"<a href='{l['url']}'>{l['name']}</a>" for l in links) + "\n"
+    txt += _render_link_row(
+        "VERIFICACIÓN RÁPIDA",
+        [(l.get("name", "Link"), l.get("url")) for l in links],
+    )
 
     if data.get("data_sources"):
         txt += render_section("FUENTES")
@@ -309,12 +321,11 @@ def format_phone_result(data: dict) -> str:
 
     socials = data.get("social_search_links", [])
     direct_socials = data.get("direct_platform_links", [])
-    if direct_socials:
-        txt += render_section("BÚSQUEDA DIRECTA EN PLATAFORMAS")
-        txt += " | ".join(f"<a href='{l['url']}'>{l['name']}</a>" for l in direct_socials) + "\n"
-    if socials:
-        txt += render_section("BÚSQUEDA EN REDES (DORKS)")
-        txt += " | ".join(f"<a href='{l['url']}'>{l['name']}</a>" for l in socials) + "\n"
+    strategy_links = [
+        *((f"{l.get('name', 'Red')} directo", l.get("url")) for l in direct_socials),
+        *((l.get("name", "Dork"), l.get("url")) for l in socials),
+    ]
+    txt += _render_link_row("ESTRATEGIA EN REDES", strategy_links)
     txt += _render_platform_searches(data.get("platform_searches", []))
 
     return txt
@@ -650,21 +661,21 @@ def format_whatsapp_result(data: dict) -> str:
     if spam.get("sources"):
         txt += f"📚 <b>Fuentes:</b> {', '.join(spam['sources'][:4])}\n"
 
-    txt += render_section("CONTACTO DIRECTO")
-    txt += f"<a href='{data['wa_link']}'>Abrir perfil</a> | "
-    txt += f"<a href='{data['wa_msg']}'>Enviar mensaje</a>\n"
     telegram = (data.get("social") or {}).get("telegram") or {}
+    contact_links = [
+        ("WhatsApp perfil", data.get("wa_link")),
+        ("WhatsApp mensaje", data.get("wa_msg")),
+    ]
     if telegram.get("url") and telegram.get("username"):
-        txt += (
-            f"<a href='{telegram['url']}'>Telegram directo</a> | "
-            f"<a href='{telegram.get('deep_link', telegram['url'])}'>Abrir app Telegram</a>\n"
-        )
+        contact_links.append(("Telegram directo", telegram.get("url")))
+        contact_links.append(("Telegram app", telegram.get("deep_link", telegram.get("url"))))
     elif data.get("tg_direct"):
-        txt += f"<a href='{data['tg_direct']}'>Telegram por número</a>\n"
-        if telegram.get("note"):
-            txt += f"<i>{telegram['note']}</i>\n"
-    if data.get("tg_search"):
-        txt += f"<a href='{data['tg_search']}'>Telegram (búsqueda)</a>\n"
+        contact_links.append(("Telegram por número", data.get("tg_direct")))
+    elif data.get("tg_search"):
+        contact_links.append(("Telegram búsqueda", data.get("tg_search")))
+    txt += _render_link_row("CONTACTO Y ACCESO", contact_links)
+    if telegram.get("note"):
+        txt += f"<i>{telegram['note']}</i>\n"
 
     if data.get("emails_hints") or data.get("phones_hints") or data.get("social_profiles"):
         txt += render_section("PISTAS RELACIONADAS")
@@ -692,35 +703,23 @@ def format_whatsapp_result(data: dict) -> str:
         "spamcalls": "SpamCalls", "whocalledme": "WhoCalledMe",
         "tellows": "Tellows", "google_dork": "Google",
     }
-    txt += render_section("VERIFICAR EN")
-    parts = [f"<a href='{links[k]}'>{v}</a>" for k, v in _lmap.items() if links.get(k)]
-    txt += " | ".join(parts) + "\n"
+    txt += _render_link_row("VERIFICACIÓN RÁPIDA", [(v, links.get(k)) for k, v in _lmap.items()])
 
-    social_parts = []
-    for key, label in (
-        ("facebook_search", "Facebook directo"),
-        ("instagram_search", "Instagram directo"),
-        ("tiktok_search", "TikTok directo"),
-        ("x_search", "X directo"),
-    ):
-        if links.get(key):
-            social_parts.append(f"<a href='{links[key]}'>{label}</a>")
-    if social_parts:
-        txt += render_section("BÚSQUEDA DIRECTA EN PLATAFORMAS")
-        txt += " | ".join(social_parts) + "\n"
-
-    social_parts = []
-    for key, label in (
-        ("facebook_dork", "Facebook"),
-        ("instagram_dork", "Instagram"),
-        ("tiktok_dork", "TikTok"),
-        ("x_dork", "X"),
-    ):
-        if links.get(key):
-            social_parts.append(f"<a href='{links[key]}'>{label}</a>")
-    if social_parts:
-        txt += render_section("BÚSQUEDA EN REDES")
-        txt += " | ".join(social_parts) + "\n"
+    strategy_links = [
+        *((label, links.get(key)) for key, label in (
+            ("facebook_search", "Facebook directo"),
+            ("instagram_search", "Instagram directo"),
+            ("tiktok_search", "TikTok directo"),
+            ("x_search", "X directo"),
+        )),
+        *((label, links.get(key)) for key, label in (
+            ("facebook_dork", "Facebook"),
+            ("instagram_dork", "Instagram"),
+            ("tiktok_dork", "TikTok"),
+            ("x_dork", "X"),
+        )),
+    ]
+    txt += _render_link_row("ESTRATEGIA EN REDES", strategy_links)
 
     txt += _render_platform_searches(data.get("platform_searches", []))
 

@@ -642,7 +642,17 @@ def analyze_phone(number: str) -> dict:
         carrier_geo["carrier_match"] = matched
         carrier_geo["reference_confidence"] = "matched" if matched else ("country_only" if same_country else "low")
         if not same_country:
-            carrier_geo = None
+            carrier_geo = {
+                "ip": carrier_ip,
+                "reference_carrier": carrier_resolved,
+                "reference_confidence": "ip_only",
+            }
+    elif carrier_ip:
+        carrier_geo = {
+            "ip": carrier_ip,
+            "reference_carrier": carrier_resolved,
+            "reference_confidence": "ip_only",
+        }
 
     caller_name   = tc_api.get("name") or tc_web.get("name") or spam_data.get("name")
     caller_source = "Truecaller API" if tc_api.get("name") else \
@@ -699,8 +709,6 @@ def analyze_phone(number: str) -> dict:
             spam_type = labels[0] if labels else "Spam"
 
     whatsapp_registered = _check_whatsapp_registered(clean)
-    e164_q = requests.utils.quote(e164)
-    clean_q = requests.utils.quote(clean)
     search_bundle = build_phone_search_bundle(e164, clean, national_digits)
 
     return {
@@ -753,7 +761,8 @@ def analyze_phone(number: str) -> dict:
         "carrier_geo": carrier_geo if carrier_geo and "error" not in (carrier_geo or {}) else None,
 
         "whatsapp": f"https://wa.me/{cc}{parsed.national_number}",
-        "telegram_search": f"https://www.google.com/search?q=site%3At.me+%22{clean_q}%22+OR+%22{e164_q}%22",
+        "telegram_direct": None,
+        "telegram_note": "Telegram directo solo se muestra cuando se resuelve un username público real; por número no existe un enlace público confiable.",
         "presence": {
             "whatsapp_registered": whatsapp_registered,
         },
