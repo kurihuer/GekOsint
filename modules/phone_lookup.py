@@ -470,6 +470,110 @@ def _region_coords(region: str):
     return None
 
 
+def build_phone_search_bundle(e164: str, clean: str, national_digits: str) -> dict:
+    """Búsquedas directas y estrategias manuales realistas para teléfono."""
+    e164_q = requests.utils.quote(e164)
+    clean_q = requests.utils.quote(clean)
+    national_q = requests.utils.quote(national_digits)
+    exact_blob = f"%22{clean_q}%22+OR+%22{e164_q}%22+OR+%22{national_q}%22"
+
+    direct_platform_links = [
+        {"name": "Facebook", "url": f"https://www.facebook.com/search/top/?q={clean_q}"},
+        {"name": "Instagram", "url": f"https://www.instagram.com/explore/search/keyword/?q={clean_q}"},
+        {"name": "TikTok", "url": f"https://www.tiktok.com/search?q={clean_q}"},
+        {"name": "X", "url": f"https://x.com/search?q=%22{clean_q}%22+OR+%22{e164_q}%22&src=typed_query"},
+    ]
+
+    social_search_links = [
+        {"name": "Google", "url": f"https://www.google.com/search?q={exact_blob}"},
+        {"name": "Facebook", "url": f"https://www.google.com/search?q=site%3Afacebook.com+({exact_blob})"},
+        {"name": "Instagram", "url": f"https://www.google.com/search?q=site%3Ainstagram.com+({exact_blob})"},
+        {"name": "TikTok", "url": f"https://www.google.com/search?q=site%3Atiktok.com+({exact_blob})"},
+        {"name": "X", "url": f"https://www.google.com/search?q=site%3Ax.com+OR+site%3Atwitter.com+({exact_blob})"},
+    ]
+
+    platform_searches = [
+        {
+            "platform": "Facebook",
+            "status": "limitado",
+            "direct_label": "Búsqueda interna",
+            "direct_url": f"https://www.facebook.com/search/top/?q={clean_q}",
+            "alternatives": [
+                {
+                    "label": "Posts",
+                    "description": "Publicaciones indexadas con el número exacto.",
+                    "url": f"https://www.google.com/search?q=site%3Afacebook.com%2Fposts+({exact_blob})",
+                },
+                {
+                    "label": "Fotos",
+                    "description": "Fotos o descripciones públicas donde aparezca el número.",
+                    "url": f"https://www.google.com/search?q=site%3Afacebook.com%2Fphoto+({exact_blob})",
+                },
+            ],
+        },
+        {
+            "platform": "Instagram",
+            "status": "limitado",
+            "direct_label": "Keyword search",
+            "direct_url": f"https://www.instagram.com/explore/search/keyword/?q={clean_q}",
+            "alternatives": [
+                {
+                    "label": "Perfiles",
+                    "description": "Perfiles o bios indexadas con el número.",
+                    "url": f"https://www.google.com/search?q=site%3Ainstagram.com+({exact_blob})",
+                },
+                {
+                    "label": "Posts",
+                    "description": "Captions o URLs de posts donde figure el número.",
+                    "url": f"https://www.google.com/search?q=site%3Ainstagram.com%2Fp+({exact_blob})",
+                },
+            ],
+        },
+        {
+            "platform": "TikTok",
+            "status": "funcional",
+            "direct_label": "Búsqueda interna",
+            "direct_url": f"https://www.tiktok.com/search?q={clean_q}",
+            "alternatives": [
+                {
+                    "label": "Indexado web",
+                    "description": "Videos, perfiles o captions indexados con el número.",
+                    "url": f"https://www.google.com/search?q=site%3Atiktok.com+({exact_blob})",
+                },
+                {
+                    "label": "Perfiles y tags",
+                    "description": "Páginas de perfil o etiquetas donde aparezca el número.",
+                    "url": f"https://www.google.com/search?q=site%3Atiktok.com%2F%40+OR+site%3Atiktok.com%2Ftag+({exact_blob})",
+                },
+            ],
+        },
+        {
+            "platform": "X",
+            "status": "funcional",
+            "direct_label": "Búsqueda interna",
+            "direct_url": f"https://x.com/search?q=%22{clean_q}%22+OR+%22{e164_q}%22&src=typed_query",
+            "alternatives": [
+                {
+                    "label": "Google",
+                    "description": "Tweets o perfiles indexados con el número.",
+                    "url": f"https://www.google.com/search?q=site%3Ax.com+OR+site%3Atwitter.com+({exact_blob})",
+                },
+                {
+                    "label": "Status",
+                    "description": "Resultados dentro de URLs de publicaciones indexadas.",
+                    "url": f"https://www.google.com/search?q=site%3Ax.com%2Fstatus+({exact_blob})",
+                },
+            ],
+        },
+    ]
+
+    return {
+        "direct_platform_links": direct_platform_links,
+        "social_search_links": social_search_links,
+        "platform_searches": platform_searches,
+    }
+
+
 # ── Función principal ─────────────────────────────────────────────────────────
 
 def analyze_phone(number: str) -> dict:
@@ -597,6 +701,7 @@ def analyze_phone(number: str) -> dict:
     whatsapp_registered = _check_whatsapp_registered(clean)
     e164_q = requests.utils.quote(e164)
     clean_q = requests.utils.quote(clean)
+    search_bundle = build_phone_search_bundle(e164, clean, national_digits)
 
     return {
         "number":        e164,
@@ -652,23 +757,12 @@ def analyze_phone(number: str) -> dict:
         "presence": {
             "whatsapp_registered": whatsapp_registered,
         },
-        "social_search_links": [
-            {"name": "Google", "url": f"https://www.google.com/search?q=%22{clean_q}%22+OR+%22{e164_q}%22"},
-            {"name": "Facebook", "url": f"https://www.google.com/search?q=site%3Afacebook.com+%22{clean_q}%22+OR+%22{e164_q}%22"},
-            {"name": "Instagram", "url": f"https://www.google.com/search?q=site%3Ainstagram.com+%22{clean_q}%22+OR+%22{e164_q}%22"},
-            {"name": "TikTok", "url": f"https://www.google.com/search?q=site%3Atiktok.com+%22{clean_q}%22+OR+%22{e164_q}%22"},
-            {"name": "X", "url": f"https://www.google.com/search?q=site%3Ax.com+%22{clean_q}%22+OR+%22{e164_q}%22"},
-        ],
-        "direct_platform_links": [
-            {"name": "Facebook", "url": f"https://www.facebook.com/search/top/?q={e164_q}"},
-            {"name": "Instagram", "url": f"https://www.instagram.com/explore/search/keyword/?q={e164_q}"},
-            {"name": "TikTok", "url": f"https://www.tiktok.com/search?q={e164_q}"},
-            {"name": "X", "url": f"https://x.com/search?q=%22{e164_q}%22&src=typed_query"},
-        ],
+        "social_search_links": search_bundle["social_search_links"],
+        "direct_platform_links": search_bundle["direct_platform_links"],
+        "platform_searches": search_bundle["platform_searches"],
 
         "osint_links": [
             {"name": "Truecaller",  "url": f"https://www.truecaller.com/search/{alpha.lower()}/{national_digits}"},
-            {"name": "GetContact",  "url": f"https://getcontact.com/en/number/{clean}"},
             {"name": "SpamCalls",   "url": f"https://spamcalls.net/en/number/{clean}"},
             {"name": "Tellows",     "url": f"https://www.tellows.com/num/{clean}"},
             {"name": "Sync.me",     "url": f"https://www.sync.me/search/?number=%2B{clean}"},

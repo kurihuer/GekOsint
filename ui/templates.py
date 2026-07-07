@@ -52,6 +52,30 @@ def _clean_runtime_error(message: str) -> str:
     return msg[:220]
 
 
+def _render_platform_searches(searches: list[dict]) -> str:
+    if not searches:
+        return ""
+    out = render_section("ESTRATEGIA EN REDES")
+    for item in searches[:4]:
+        platform = item.get("platform", "Plataforma")
+        status = "✅ Funcional" if item.get("status") == "funcional" else "⚠️ Limitado"
+        direct_label = item.get("direct_label") or "Búsqueda directa"
+        direct_url = item.get("direct_url")
+        out += f"{status} — <b>{platform}</b>\n"
+        if direct_url:
+            out += f"🔎 <a href='{direct_url}'>{direct_label}</a>\n"
+        for alt in (item.get("alternatives") or [])[:2]:
+            label = alt.get("label") or "Método alterno"
+            desc = alt.get("description") or ""
+            url = alt.get("url")
+            if url:
+                out += f"📌 <a href='{url}'>{label}</a>"
+                if desc:
+                    out += f" — <i>{desc}</i>"
+                out += "\n"
+    return out
+
+
 # ── IP Intelligence ───────────────────────────────────────────────────────────
 
 def format_ip_result(data: dict) -> str:
@@ -291,6 +315,7 @@ def format_phone_result(data: dict) -> str:
     if socials:
         txt += render_section("BÚSQUEDA EN REDES (DORKS)")
         txt += " | ".join(f"<a href='{l['url']}'>{l['name']}</a>" for l in socials) + "\n"
+    txt += _render_platform_searches(data.get("platform_searches", []))
 
     return txt
 
@@ -689,12 +714,15 @@ def format_whatsapp_result(data: dict) -> str:
         ("facebook_dork", "Facebook"),
         ("instagram_dork", "Instagram"),
         ("tiktok_dork", "TikTok"),
+        ("x_dork", "X"),
     ):
         if links.get(key):
             social_parts.append(f"<a href='{links[key]}'>{label}</a>")
     if social_parts:
         txt += render_section("BÚSQUEDA EN REDES")
         txt += " | ".join(social_parts) + "\n"
+
+    txt += _render_platform_searches(data.get("platform_searches", []))
 
     return txt
 

@@ -384,11 +384,14 @@ def analyze_whatsapp(number):
             return cached[1]
 
         phone_intel = {}
+        search_bundle = {}
         try:
-            from modules.phone_lookup import analyze_phone
+            from modules.phone_lookup import analyze_phone, build_phone_search_bundle
             phone_intel = analyze_phone(e164) or {}
+            search_bundle = build_phone_search_bundle(e164, clean, national_digits)
         except Exception as e:
             logger.debug(f"WA fallback phone_intel: {e}")
+            search_bundle = {}
 
         registered = (
             ((phone_intel.get("presence") or {}).get("whatsapp_registered"))
@@ -445,6 +448,19 @@ def analyze_whatsapp(number):
 
         social_profiles = tc_enrich.get("social_profiles", [])
         social_profiles = [p for p in social_profiles if p.get("site") != "Telegram"]
+        if not search_bundle:
+            try:
+                from modules.phone_lookup import build_phone_search_bundle
+                search_bundle = build_phone_search_bundle(e164, clean, national_digits)
+            except Exception:
+                search_bundle = {}
+        social_links = search_bundle.get("social_search_links") or []
+        direct_links = search_bundle.get("direct_platform_links") or []
+
+        def _link_at(items, index):
+            if 0 <= index < len(items):
+                return (items[index] or {}).get("url")
+            return None
 
         result = {
             "number":       e164,
@@ -472,6 +488,7 @@ def analyze_whatsapp(number):
             "emails_hints": tc_enrich.get("emails", []),
             "phones_hints": tc_enrich.get("phones", []),
             "social_profiles": social_profiles,
+            "platform_searches": search_bundle.get("platform_searches", []),
             "wa_link":      f"https://wa.me/{clean}",
             "wa_msg":       f"https://api.whatsapp.com/send?phone={clean}",
             "tg_search":    telegram.get("search_link"),
@@ -483,13 +500,14 @@ def analyze_whatsapp(number):
                 "whocalledme": f"https://whocalledme.com/Phone-Number.aspx/{clean}",
                 "tellows":     f"https://www.tellows.com/num/{clean}",
                 "google_dork": f"https://www.google.com/search?q=%22{e164}%22+OR+%22{clean}%22",
-                "facebook_dork": f"https://www.google.com/search?q=site%3Afacebook.com+%22{clean}%22+OR+%22{e164}%22",
-                "instagram_dork": f"https://www.google.com/search?q=site%3Ainstagram.com+%22{clean}%22+OR+%22{e164}%22",
-                "tiktok_dork": f"https://www.google.com/search?q=site%3Atiktok.com+%22{clean}%22+OR+%22{e164}%22",
-                "facebook_search": f"https://www.facebook.com/search/top/?q={urllib.parse.quote(e164)}",
-                "instagram_search": f"https://www.instagram.com/explore/search/keyword/?q={urllib.parse.quote(e164)}",
-                "tiktok_search": f"https://www.tiktok.com/search?q={urllib.parse.quote(e164)}",
-                "x_search": f"https://x.com/search?q=%22{urllib.parse.quote(e164)}%22&src=typed_query",
+                "facebook_dork": _link_at(social_links, 1),
+                "instagram_dork": _link_at(social_links, 2),
+                "tiktok_dork": _link_at(social_links, 3),
+                "x_dork": _link_at(social_links, 4),
+                "facebook_search": _link_at(direct_links, 0),
+                "instagram_search": _link_at(direct_links, 1),
+                "tiktok_search": _link_at(direct_links, 2),
+                "x_search": _link_at(direct_links, 3),
             }
         }
         result["business"] = is_business
