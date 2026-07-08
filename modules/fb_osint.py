@@ -242,6 +242,16 @@ def _normalize_fb_input(raw_query: str) -> tuple[str, str, str | None]:
         user_id = url_id.group(1)
         return user_id, "user_id", f"https://www.facebook.com/profile.php?id={user_id}"
 
+    url_path = re.search(
+        r'(?:https?://)?(?:www\.|m\.|mbasic\.)?(?:facebook|fb)\.com/([^?#]+)',
+        text,
+        re.IGNORECASE,
+    )
+    if url_path:
+        path = (url_path.group(1) or "").strip().strip("/")
+        if path:
+            return path, "url", f"https://www.facebook.com/{path}"
+
     clean_text = text.split("?", 1)[0].rstrip("/")
     url_user = re.search(
         r'(?:https?://)?(?:www\.|m\.|mbasic\.)?(?:facebook|fb)\.com/([A-Za-z0-9.\-]+)$',
@@ -295,9 +305,9 @@ async def resolve_fb_profile(identifier: str) -> dict:
     if m:
         forced_id = m.group(1)
     else:
-        um = re.search(r'(?:facebook|fb)\.com/([A-Za-z0-9.\-]+)', ident)
-        if um:
-            ident = um.group(1).split('?')[0]
+        pm = re.search(r'(?:facebook|fb)\.com/([^?#]+)', ident, re.IGNORECASE)
+        if pm:
+            ident = pm.group(1).split('?')[0].strip('/').strip()
     ident = ident.lstrip('@').strip('/')
     if re.match(r'^\d{8,17}$', ident):
         forced_id = ident
@@ -519,11 +529,11 @@ async def fb_lookup(query: str) -> dict:
     out["input_type"] = normalized_type
     if normalized_type == "user_id":
         out["user_id"] = query
-    out["search_links"] = _build_manual_search_links(query, out["input_type"])
+    out["search_links"] = _build_manual_search_links(profile_url or query, out["input_type"])
     out["profile_url"] = profile_url
 
     # 1) username o user_id → resolver perfil (ID + foto CDN + nombre)
-    if out["input_type"] in ("username", "user_id"):
+    if out["input_type"] in ("username", "user_id", "url"):
         resolved = await resolve_fb_profile(query) or {}
         if not isinstance(resolved, dict):
             resolved = {}
