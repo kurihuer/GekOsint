@@ -394,16 +394,60 @@ def _render_verified_username_socials(username: str, socials: dict | None) -> st
 
     ig = socials.get("instagram") or {}
     if ig.get("found"):
+        p = ig.get("profile") or {}
         rows.append(f"📷 <a href='https://www.instagram.com/{username}/'>Instagram</a>")
+        ig_bits: list[str] = []
+        if p.get("full_name"):
+            ig_bits.append(p["full_name"].replace("<", "&lt;").replace(">", "&gt;"))
+        flags = []
+        if p.get("is_verified"):
+            flags.append("verificada")
+        if p.get("is_private"):
+            flags.append("privada")
+        if p.get("is_business"):
+            flags.append("business")
+        if flags:
+            ig_bits.append(", ".join(flags))
+        if p.get("followers") is not None:
+            ig_bits.append(f"{p.get('followers', 0):,} seguidores")
+        if p.get("posts_count") is not None:
+            ig_bits.append(f"{p.get('posts_count', 0):,} posts")
+        if ig_bits:
+            rows.append(f"   ▪️ {' · '.join(ig_bits[:4])}")
 
     fb = socials.get("facebook") or {}
     if fb.get("found"):
         fb_url = f"https://www.facebook.com/{fb.get('user_id')}" if fb.get("user_id") else f"https://www.facebook.com/{username}"
         rows.append(f"📘 <a href='{fb_url}'>Facebook</a>")
+        fb_bits: list[str] = []
+        if fb.get("display_name"):
+            fb_bits.append(str(fb["display_name"]).replace("<", "&lt;").replace(">", "&gt;"))
+        if fb.get("user_id"):
+            fb_bits.append(f"ID {fb['user_id']}")
+        if fb.get("profile_pic_cdn") or (fb.get("recovery") or {}).get("profile_pic_url"):
+            fb_bits.append("foto pública")
+        if fb_bits:
+            rows.append(f"   ▪️ {' · '.join(fb_bits[:3])}")
 
     tt = socials.get("tiktok") or {}
     if isinstance(tt, dict) and not tt.get("error") and tt.get("profile_url"):
         rows.append(f"🎵 <a href='{tt['profile_url']}'>TikTok</a>")
+        tt_bits: list[str] = []
+        if tt.get("nickname"):
+            tt_bits.append(str(tt["nickname"]).replace("<", "&lt;").replace(">", "&gt;"))
+        tt_flags = []
+        if tt.get("verified"):
+            tt_flags.append("verificada")
+        if tt.get("private"):
+            tt_flags.append("privada")
+        if tt_flags:
+            tt_bits.append(", ".join(tt_flags))
+        if tt.get("followers"):
+            tt_bits.append(f"{tt['followers']} seguidores")
+        if tt.get("video_count"):
+            tt_bits.append(f"{tt['video_count']} videos")
+        if tt_bits:
+            rows.append(f"   ▪️ {' · '.join(tt_bits[:4])}")
 
     if not rows:
         return ""

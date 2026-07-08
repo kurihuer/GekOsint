@@ -709,16 +709,60 @@ def generate_pdf_report(title: str, data: dict, input_text: str = "") -> bytes:
             verified_socials = []
             ig = socials.get("instagram") or {}
             if ig.get("found"):
-                verified_socials.append(["Instagram", f"https://www.instagram.com/{user.get('username', resolved_input).lstrip('@')}/"])
+                ig_profile = ig.get("profile") or {}
+                ig_evidence = []
+                if ig_profile.get("full_name"):
+                    ig_evidence.append(str(ig_profile.get("full_name"))[:40])
+                ig_flags = []
+                if ig_profile.get("is_verified"):
+                    ig_flags.append("verificada")
+                if ig_profile.get("is_private"):
+                    ig_flags.append("privada")
+                if ig_flags:
+                    ig_evidence.append(", ".join(ig_flags))
+                if ig_profile.get("followers") is not None:
+                    ig_evidence.append(f"{ig_profile.get('followers', 0):,} seg.")
+                verified_socials.append([
+                    "Instagram",
+                    " | ".join(ig_evidence[:3]) or "Perfil confirmado por IG",
+                    f"https://www.instagram.com/{user.get('username', resolved_input).lstrip('@')}/",
+                ])
             fb = socials.get("facebook") or {}
             if fb.get("found"):
                 fb_url = f"https://www.facebook.com/{fb.get('user_id')}" if fb.get("user_id") else f"https://www.facebook.com/{user.get('username', resolved_input).lstrip('@')}"
-                verified_socials.append(["Facebook", fb_url])
+                fb_evidence = []
+                if fb.get("display_name"):
+                    fb_evidence.append(str(fb.get("display_name"))[:40])
+                if fb.get("user_id"):
+                    fb_evidence.append(f"ID {fb.get('user_id')}")
+                if fb.get("profile_pic_cdn") or (fb.get("recovery") or {}).get("profile_pic_url"):
+                    fb_evidence.append("foto publica")
+                verified_socials.append([
+                    "Facebook",
+                    " | ".join(fb_evidence[:3]) or "Perfil confirmado por FB",
+                    fb_url,
+                ])
             tt = socials.get("tiktok") or {}
             if isinstance(tt, dict) and not tt.get("error") and tt.get("profile_url"):
-                verified_socials.append(["TikTok", tt.get("profile_url")])
+                tt_evidence = []
+                if tt.get("nickname"):
+                    tt_evidence.append(str(tt.get("nickname"))[:40])
+                tt_flags = []
+                if tt.get("verified"):
+                    tt_flags.append("verificada")
+                if tt.get("private"):
+                    tt_flags.append("privada")
+                if tt_flags:
+                    tt_evidence.append(", ".join(tt_flags))
+                if tt.get("followers"):
+                    tt_evidence.append(f"{tt.get('followers')} seg.")
+                verified_socials.append([
+                    "TikTok",
+                    " | ".join(tt_evidence[:3]) or "Perfil confirmado por TikTok",
+                    tt.get("profile_url"),
+                ])
             if verified_socials:
-                t = Table([["Red Social", "URL"]] + verified_socials, colWidths=[100, 400])
+                t = Table([["Red Social", "Prueba", "URL"]] + verified_socials, colWidths=[80, 170, 250])
                 t.setStyle(TableStyle([
                     ('BACKGROUND', (0, 0), (-1, 0), darkblue),
                     ('TEXTCOLOR', (0, 0), (-1, 0), Color(1, 1, 1)),
