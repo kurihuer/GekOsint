@@ -699,17 +699,52 @@ def generate_pdf_report(title: str, data: dict, input_text: str = "") -> bytes:
         if "email_recon" in payload:
             recon = payload["email_recon"]
             story.append(Paragraph("📨 EMAIL RECON (Multi-Platform)", header_style))
-            found_services = [entry.get("service", "") for entry in (recon.get("found_in") or []) if entry.get("service")]
+            summary = recon.get("summary") or {}
+            meta_bits = [
+                f"Chequeados: {summary.get('checked_total', len(recon.get('checked') or []))}",
+                f"Detectados: {summary.get('found_total', len(recon.get('found_in') or []))}",
+            ]
+            if summary.get("high_signal_total"):
+                meta_bits.append(f"Fuertes: {summary.get('high_signal_total')}")
+            if recon.get("local_part"):
+                meta_bits.append(f"Alias: {recon.get('local_part')}")
+            if recon.get("domain"):
+                meta_bits.append(f"Dominio: {recon.get('domain')}")
+            story.append(Paragraph(" | ".join(meta_bits), body_style))
+            story.append(Spacer(1, 6))
+
+            found_services = [
+                [
+                    entry.get("service", ""),
+                    entry.get("category", "Otro"),
+                    entry.get("signal", "medium"),
+                    entry.get("hint", ""),
+                ]
+                for entry in (recon.get("found_in") or [])
+                if entry.get("service")
+            ]
             if found_services:
-                items = [[s] for s in found_services[:12]]
-                t = Table([["Platform"]] + items)
+                t = Table([["Platform", "Categoria", "Fuerza", "Pista"]] + found_services[:12], colWidths=[110, 110, 70, 210])
                 t.setStyle(TableStyle([
                     ('BACKGROUND', (0, 0), (-1, 0), darkblue),
                     ('TEXTCOLOR', (0, 0), (-1, 0), Color(1, 1, 1)),
                     ('FONTSIZE', (0, 0), (-1, -1), 9),
                     ('PADDING', (0, 0), (-1, -1), 4),
+                    ('GRID', (0, 0), (-1, -1), 0.25, Color(0.7, 0.7, 0.7)),
                 ]))
                 story.append(t)
+                story.append(Spacer(1, 6))
+            pivots = recon.get("pivots") or []
+            if pivots:
+                story.append(Paragraph("Pivotes recomendados", section_style))
+                for pivot in pivots[:3]:
+                    label = pivot.get("label", "Pivote")
+                    url = pivot.get("url", "")
+                    desc = pivot.get("description", "")
+                    line = f"• {label}: {url}"
+                    if desc:
+                        line += f" ({desc})"
+                    story.append(Paragraph(line, body_style))
             story.append(Spacer(1, 10))
         
         if "whatsapp_osint" in payload:

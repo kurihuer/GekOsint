@@ -16,6 +16,7 @@ import asyncio
 import logging
 import re
 import time
+import urllib.parse
 from collections import defaultdict, deque
 from typing import Optional
 
@@ -24,6 +25,21 @@ import httpx
 logger = logging.getLogger("GekOsint.EmailRecon")
 
 EMAIL_RE = re.compile(r"^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$")
+
+SERVICE_META = {
+    "X (Twitter)": {"category": "Red social", "signal": "medium"},
+    "Microsoft": {"category": "Identidad", "signal": "high"},
+    "Apple ID": {"category": "Identidad", "signal": "high"},
+    "Spotify": {"category": "Consumo", "signal": "medium"},
+    "Adobe": {"category": "Identidad", "signal": "high"},
+    "Pinterest": {"category": "Red social", "signal": "medium"},
+    "LastPass": {"category": "Seguridad", "signal": "high"},
+    "GitHub": {"category": "Desarrollo", "signal": "high"},
+    "Duolingo": {"category": "Consumo", "signal": "medium"},
+    "Imgur": {"category": "Contenido", "signal": "medium"},
+    "Strava": {"category": "Consumo", "signal": "medium"},
+    "Proton Mail": {"category": "Identidad", "signal": "high"},
+}
 
 # ── Rate limiter (suave) ─────────────────────────────────────────────────────
 PER_USER_COOLDOWN   = 30
@@ -65,6 +81,30 @@ UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
 )
+
+
+def _build_email_pivots(email: str) -> list[dict]:
+    local, domain = email.split("@", 1)
+    exact_email = urllib.parse.quote_plus(f'"{email}"')
+    local_q = urllib.parse.quote_plus(f'"{local}"')
+    domain_q = urllib.parse.quote_plus(domain)
+    return [
+        {
+            "label": "Google exacto",
+            "url": f"https://www.google.com/search?q={exact_email}",
+            "description": "Busca el correo exacto en resultados indexados.",
+        },
+        {
+            "label": "Google local-part",
+            "url": f"https://www.google.com/search?q={local_q}+{domain_q}",
+            "description": "Cruza alias y dominio para pivotes manuales.",
+        },
+        {
+            "label": "GitHub por email",
+            "url": f"https://github.com/search?q={urllib.parse.quote_plus(email)}&type=users",
+            "description": "Verifica si el email aparece expuesto en GitHub.",
+        },
+    ]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -404,6 +444,10 @@ async def email_recon(email: str) -> dict:
         "checked":  [],
         "errors":   [],
         "hints":    [],
+        "local_part": "",
+        "domain": "",
+        "summary": {},
+        "pivots": [],
     }
 
     email = (email or "").strip().lower()
@@ -411,6 +455,8 @@ async def email_recon(email: str) -> dict:
         out["errors"].append(f"Email inválido: {email!r}")
         return out
     out["valid"] = True
+    out["local_part"], out["domain"] = email.split("@", 1)
+    out["pivots"] = _build_email_pivots(email)
 
     async with httpx.AsyncClient(
         timeout=12.0, follow_redirects=True,
@@ -426,7 +472,12 @@ async def email_recon(email: str) -> dict:
             continue
         out["checked"].append(r["service"])
         if r.get("found"):
-            entry = {"service": r["service"]}
+            meta = SERVICE_META.get(r["service"], {})
+            entry = {
+                "service": r["service"],
+                "category": meta.get("category", "Otro"),
+                "signal": meta.get("signal", "medium"),
+            }
             if r.get("hint"):
                 entry["hint"] = r["hint"]
                 out["hints"].append(f"{r['service']}: {r['hint']}")
@@ -434,5 +485,20 @@ async def email_recon(email: str) -> dict:
         elif r.get("error") and r["error"] not in ("no-aplica",):
             # Solo agregamos errores reales (no los "no aplica")
             logger.debug(f"{r['service']}: {r['error']}")
+
+    signal_rank = {"high": 0, "medium": 1, "low": 2}
+    out["found_in"].sort(
+        key=lambda item: (
+            signal_rank.get(str(item.get("signal", "medium")).lower(), 9),
+            str(item.get("category", "")),
+            str(item.get("service", "")),
+        )
+    )
+    out["summary"] = {
+        "checked_total": len(out["checked"]),
+        "found_total": len(out["found_in"]),
+        "high_signal_total": sum(1 for item in out["found_in"] if item.get("signal") == "high"),
+        "categories": sorted({item.get("category", "Otro") for item in out["found_in"]}),
+    }
 
     return out

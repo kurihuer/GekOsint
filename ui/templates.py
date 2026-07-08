@@ -1542,32 +1542,68 @@ def format_email_recon(data: dict) -> str:
 
     found = data.get("found_in") or []
     checked = data.get("checked") or []
+    summary = data.get("summary") or {}
+    high_signal = [entry for entry in found if entry.get("signal") == "high"]
+    other_hits = [entry for entry in found if entry.get("signal") != "high"]
 
-    out.append(f"🔍 Chequeado contra <b>{len(checked)} servicios</b>")
-    out.append(f"✅ Encontrado en: <b>{len(found)}</b>\n")
+    out.append(f"🔍 Chequeado contra <b>{summary.get('checked_total', len(checked))} servicios</b>")
+    out.append(f"✅ Registros detectados: <b>{summary.get('found_total', len(found))}</b>")
+    if summary.get("high_signal_total"):
+        out.append(f"🎯 Hallazgos fuertes: <b>{summary['high_signal_total']}</b>")
+    if data.get("local_part") or data.get("domain"):
+        out.append(
+            f"🧩 Alias: <code>{data.get('local_part', '?')}</code> | "
+            f"Dominio: <code>{data.get('domain', '?')}</code>"
+        )
+    if summary.get("categories"):
+        out.append("🗂️ Categorías: " + ", ".join(summary["categories"]))
+    out.append("")
 
-    if found:
-        out.append("📍 <b>Servicios donde el email está registrado</b>")
-        for entry in found:
+    if high_signal:
+        out.append("📍 <b>Hallazgos fuertes</b>")
+        for entry in high_signal:
             line = f"   ▪️ <b>{entry['service']}</b>"
+            if entry.get("category"):
+                line += f" — <i>{entry['category']}</i>"
+            if entry.get("hint"):
+                line += f" — <code>{entry['hint']}</code>"
+            out.append(line)
+        out.append("")
+
+    if other_hits:
+        out.append("📌 <b>Otros registros detectados</b>")
+        for entry in other_hits:
+            line = f"   ▪️ <b>{entry['service']}</b>"
+            if entry.get("category"):
+                line += f" — <i>{entry['category']}</i>"
             if entry.get("hint"):
                 line += f" — <code>{entry['hint']}</code>"
             out.append(line)
         out.append("")
 
     if data.get("hints"):
-        out.append("🎯 <b>Hints adicionales</b>")
-        for h in data["hints"]:
+        out.append("🎯 <b>Pistas expuestas</b>")
+        for h in data["hints"][:6]:
             out.append(f"   ▪️ {h}")
+        out.append("")
+
+    pivots = data.get("pivots") or []
+    if pivots:
+        out.append("🔎 <b>Pivotes recomendados</b>")
+        for pivot in pivots[:3]:
+            label = pivot.get("label") or "Pivote"
+            url = pivot.get("url")
+            desc = pivot.get("description") or ""
+            if url:
+                line = f"   ▪️ <a href='{url}'>{label}</a>"
+                if desc:
+                    line += f" — <i>{desc}</i>"
+                out.append(line)
         out.append("")
 
     if not found:
         out.append("ℹ️ <i>Email no detectado en los servicios chequeados.</i>")
-        out.append("   <i>Puede ser cuenta nueva o servicios no cubiertos.</i>")
-
-    not_found = [s for s in checked if not any(f["service"] == s for f in found)]
-    if not_found:
-        out.append("\n<i>No registrado en: " + ", ".join(not_found) + "</i>")
+        out.append("   <i>Puede ser cuenta nueva, privada o fuera de cobertura.</i>")
 
     return "\n".join(out)
 
