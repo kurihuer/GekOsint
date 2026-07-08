@@ -33,6 +33,44 @@ import httpx
 
 logger = logging.getLogger("GekOsint.FBOsint")
 
+# #region debug-point Z:dbg-helper
+def _dbg_event(hypothesis_id: str, msg: str, data: dict | None = None, run_id: str = "pre-fix") -> None:
+    try:
+        import json, urllib.request
+        _p = ".dbg/fb-no-photo.env"
+        _u, _s = "http://127.0.0.1:7777/event", "fb-no-photo"
+        try:
+            with open(_p, "r", encoding="utf-8") as f:
+                c = f.read()
+            for line in c.splitlines():
+                if line.startswith("DEBUG_SERVER_URL="):
+                    _u = line.split("=", 1)[1].strip() or _u
+                elif line.startswith("DEBUG_SESSION_ID="):
+                    _s = line.split("=", 1)[1].strip() or _s
+        except Exception:
+            pass
+        payload = {
+            "sessionId": _s,
+            "runId": run_id,
+            "hypothesisId": hypothesis_id,
+            "location": "modules/fb_osint.py",
+            "msg": f"[DEBUG] {msg}",
+            "data": data or {},
+            "ts": int(time.time() * 1000),
+        }
+        urllib.request.urlopen(
+            urllib.request.Request(
+                _u,
+                data=json.dumps(payload).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            ),
+            timeout=2,
+        ).read()
+    except Exception:
+        return
+# #endregion
+
 # ── Configuración (env vars) ──────────────────────────────────────────────────
 try:
     from config import FB_C_USER, FB_XS, FB_DATR, FB_FR, PROXY_URL
@@ -318,6 +356,8 @@ async def resolve_fb_profile(identifier: str) -> dict:
     else:
         path_variants = [ident]
 
+    pic_fallback_tried = False
+
     # URLs: www (desktop, suele traer og:image) primero, luego m y mbasic.
     candidate_urls = []
     for p in path_variants:
@@ -354,6 +394,11 @@ async def resolve_fb_profile(identifier: str) -> dict:
                     continue
 
                 html = r.text or ""
+                final_url = str(getattr(r, "url", "") or "")
+                if final_url and not out["user_id"]:
+                    fm = re.search(r'(?:profile\.php\?id=)(\d{8,17})', final_url)
+                    if fm:
+                        out["user_id"] = fm.group(1)
 
                 if not out["user_id"]:
                     for pat in id_patterns:
@@ -368,6 +413,53 @@ async def resolve_fb_profile(identifier: str) -> dict:
                 name = _extract_display_name(html)
                 if name and not out["display_name"]:
                     out["display_name"] = name
+
+                if out.get("user_id") and not out.get("profile_pic") and not pic_fallback_tried:
+                    pic_fallback_tried = True
+                    try:
+                        pic_url = (
+                            "https://mbasic.facebook.com/profile/picture/view/"
+                            f"?profile_id={out['user_id']}"
+                        )
+                        rpic = await client.get(
+                            pic_url,
+                            headers={
+                                "User-Agent":      UA_MOBILE,
+                                "Accept":          "text/html,application/xhtml+xml",
+                                "Accept-Language": "en-US,en;q=0.9",
+                            },
+                        )
+                        if rpic.status_code == 200:
+                            pic2 = _extract_profile_pic(rpic.text or "")
+                            if pic2 and not out.get("profile_pic"):
+                                out["profile_pic"] = pic2
+                    except Exception:
+                        pass
+
+                # #region debug-point A:resolve-candidate
+                _dbg_event(
+                    "A",
+                    "resolve_fb_profile candidate fetched",
+                    {
+                        "url": url,
+                        "status": r.status_code,
+                        "len": len(html),
+                        "login_wall": any(
+                            k in (html.lower())
+                            for k in (
+                                "login.php", "m.facebook.com/login", "checkpoint", "password",
+                                "enter your password", "iniciar sesión", "inicia sesión",
+                            )
+                        ),
+                        "got_user_id": bool(out.get("user_id")),
+                        "got_name": bool(out.get("display_name")),
+                        "got_pic": bool(out.get("profile_pic")),
+                        "has_cookies": bool(_has_fb_cookies()),
+                        "has_proxy": bool(PROXY_URL),
+                        "pic_fallback_tried": pic_fallback_tried,
+                    },
+                )
+                # #endregion
 
                 # Tenemos ID y foto → listo. Si falta la foto, seguimos probando
                 # las otras URLs (mbasic/m) por si una la expone.
@@ -450,14 +542,42 @@ async def get_fb_recovery_hints(query: str) -> dict:
                 if r1.status_code in (401, 429):
                     trigger_fb_pause(f"identify {r1.status_code}")
                     out["error"] = f"FB rate limit ({r1.status_code})"
+                    # #region debug-point B:recovery-rate
+                    _dbg_event(
+                        "B",
+                        "get_fb_recovery_hints rate limited",
+                        {"url": url, "status": r1.status_code, "has_proxy": bool(PROXY_URL)},
+                    )
+                    # #endregion
                     return out
 
                 if r1.status_code != 200:
+                    # #region debug-point B:recovery-http
+                    _dbg_event(
+                        "B",
+                        "get_fb_recovery_hints non-200",
+                        {"url": url, "status": r1.status_code, "has_proxy": bool(PROXY_URL)},
+                    )
+                    # #endregion
                     continue
 
                 html = r1.text or ""
                 name = _extract_display_name(html)
                 pic  = _extract_profile_pic(html)
+                # #region debug-point B:recovery-parse
+                _dbg_event(
+                    "B",
+                    "get_fb_recovery_hints parsed",
+                    {
+                        "url": url,
+                        "status": r1.status_code,
+                        "len": len(html),
+                        "got_name": bool(name),
+                        "got_pic": bool(pic),
+                        "has_proxy": bool(PROXY_URL),
+                    },
+                )
+                # #endregion
                 if name:
                     out["display_name"] = name
                     out["found"] = True
@@ -532,6 +652,21 @@ async def fb_lookup(query: str) -> dict:
     out["search_links"] = _build_manual_search_links(profile_url or query, out["input_type"])
     out["profile_url"] = profile_url
 
+    # #region debug-point C:fb-lookup-normalize
+    _dbg_event(
+        "C",
+        "fb_lookup normalized input",
+        {
+            "raw_query": raw_query,
+            "query": query,
+            "input_type": normalized_type,
+            "profile_url": profile_url,
+            "has_cookies": bool(_has_fb_cookies()),
+            "has_proxy": bool(PROXY_URL),
+        },
+    )
+    # #endregion
+
     # 1) username o user_id → resolver perfil (ID + foto CDN + nombre)
     if out["input_type"] in ("username", "user_id", "url"):
         resolved = await resolve_fb_profile(query) or {}
@@ -548,6 +683,19 @@ async def fb_lookup(query: str) -> dict:
             out["profile_pic_cdn"] = resolved["profile_pic"]
         if resolved.get("error") and not resolved.get("user_id"):
             out["errors"].append(f"Resolve: {resolved['error']}")
+
+        # #region debug-point C:fb-lookup-resolve
+        _dbg_event(
+            "C",
+            "fb_lookup resolve result",
+            {
+                "resolved_user_id": resolved.get("user_id"),
+                "resolved_has_name": bool(resolved.get("display_name")),
+                "resolved_has_pic": bool(resolved.get("profile_pic")),
+                "errors_count": len(out.get("errors") or []),
+            },
+        )
+        # #endregion
 
     # 2) Recovery hints — best-effort (no se esperan email/phone)
     await asyncio.sleep(INTER_REQUEST_WAIT)
@@ -579,6 +727,24 @@ async def fb_lookup(query: str) -> dict:
         out["found"] = True
         if not out.get("profile_url"):
             out["profile_url"] = f"https://www.facebook.com/profile.php?id={out['user_id']}"
+
+    # #region debug-point D:fb-lookup-post
+    _dbg_event(
+        "D",
+        "fb_lookup post recovery",
+        {
+            "found": bool(out.get("found")),
+            "user_id": out.get("user_id"),
+            "has_name": bool(out.get("display_name")),
+            "has_pic_cdn": bool(out.get("profile_pic_cdn")),
+            "graph_urls": len(out.get("profile_pic_urls") or []),
+            "profile_url": out.get("profile_url"),
+            "recovery_found": bool((out.get("recovery") or {}).get("found")),
+            "recovery_has_pic": bool((out.get("recovery") or {}).get("profile_pic_url")),
+            "errors": (out.get("errors") or [])[:2],
+        },
+    )
+    # #endregion
 
     if not out["found"] and out["input_type"] in ("phone", "email"):
         out["notes"].append(
@@ -613,5 +779,17 @@ async def fb_lookup(query: str) -> dict:
         if signal not in deduped:
             deduped.append(signal)
     out["evidence_signals"] = deduped
+
+    # #region debug-point D:fb-lookup-final
+    _dbg_event(
+        "D",
+        "fb_lookup final",
+        {
+            "confidence": out.get("confidence"),
+            "evidence": out.get("evidence_signals"),
+        },
+        run_id="pre-fix",
+    )
+    # #endregion
 
     return out
