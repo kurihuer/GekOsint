@@ -417,17 +417,21 @@ def _render_verified_username_socials(username: str, socials: dict | None) -> st
 
     fb = socials.get("facebook") or {}
     if fb.get("found"):
-        fb_url = f"https://www.facebook.com/{fb.get('user_id')}" if fb.get("user_id") else f"https://www.facebook.com/{username}"
+        fb_url = fb.get("profile_url") or (
+            f"https://www.facebook.com/{fb.get('user_id')}" if fb.get("user_id") else f"https://www.facebook.com/{username}"
+        )
         rows.append(f"📘 <a href='{fb_url}'>Facebook</a>")
         fb_bits: list[str] = []
         if fb.get("display_name"):
             fb_bits.append(str(fb["display_name"]).replace("<", "&lt;").replace(">", "&gt;"))
         if fb.get("user_id"):
             fb_bits.append(f"ID {fb['user_id']}")
+        if fb.get("confidence"):
+            fb_bits.append(f"confianza {fb['confidence']}")
         if fb.get("profile_pic_cdn") or (fb.get("recovery") or {}).get("profile_pic_url"):
             fb_bits.append("foto pública")
         if fb_bits:
-            rows.append(f"   ▪️ {' · '.join(fb_bits[:3])}")
+            rows.append(f"   ▪️ {' · '.join(fb_bits[:4])}")
 
     tt = socials.get("tiktok") or {}
     if isinstance(tt, dict) and not tt.get("error") and tt.get("profile_url"):
@@ -1430,16 +1434,33 @@ def format_fb_osint(data: dict) -> str:
 
     # ── Status básico ────────────────────────────────────────────────────────
     out.append("✅ <b>Cuenta encontrada</b>")
+    confidence = (data.get("confidence") or "").lower()
+    if confidence:
+        confidence_map = {
+            "high": "🟢 alta",
+            "medium": "🟡 media",
+            "low": "⚪ baja",
+        }
+        out.append(f"   ▪️ Confianza: <b>{confidence_map.get(confidence, confidence)}</b>")
     if data.get("display_name"):
         nm = data["display_name"].replace("<", "&lt;").replace(">", "&gt;")
         out.append(f"   ▪️ Nombre: <b>{nm}</b>")
     if data.get("user_id"):
         out.append(f"   ▪️ FB User ID: <code>{data['user_id']}</code>")
+    if data.get("profile_url"):
+        out.append(
+            f"   ▪️ Perfil: "
+            f"<a href='{data['profile_url']}'>Abrir perfil</a>"
+        )
+    elif data.get("user_id"):
         out.append(
             f"   ▪️ Perfil: "
             f"<a href='https://www.facebook.com/{data['user_id']}'>"
             f"facebook.com/{data['user_id']}</a>"
         )
+    signals = data.get("evidence_signals") or []
+    if signals:
+        out.append(f"   ▪️ Evidencia: {' · '.join(signals[:4])}")
     out.append("")
 
     # ── Recovery hints ───────────────────────────────────────────────────────
@@ -1483,6 +1504,19 @@ def format_fb_osint(data: dict) -> str:
             out.append(f"   ▪️ <a href='{pic_urls[0]}'>{label}</a>")
         if len(pic_urls) > 1:
             out.append(f"   ▪️ <a href='{pic_urls[1]}'>Normal</a>")
+        out.append("")
+
+    links = data.get("search_links") or {}
+    manual = []
+    if data.get("profile_url"):
+        manual.append(f"<a href='{data['profile_url']}'>Perfil</a>")
+    if links.get("facebook_search"):
+        manual.append(f"<a href='{links['facebook_search']}'>Buscar en Facebook</a>")
+    if links.get("google"):
+        manual.append(f"<a href='{links['google']}'>Google site:facebook</a>")
+    if manual:
+        out.append("🔎 <b>Verificación rápida</b>")
+        out.append(" | ".join(manual))
         out.append("")
 
     # Errores no fatales

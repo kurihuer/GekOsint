@@ -664,7 +664,37 @@ def generate_pdf_report(title: str, data: dict, input_text: str = "") -> bytes:
             add_section("📧 GMAIL / GOOGLE OSINT", payload["gmail_osint"])
 
         if "fb_osint" in payload:
-            add_section("📘 FACEBOOK OSINT", payload["fb_osint"])
+            fb = payload["fb_osint"] or {}
+            story.append(Paragraph("📘 FACEBOOK OSINT", header_style))
+            fb_items = []
+            if fb.get("input"):
+                fb_items.append(["Input", str(fb.get("input"))[:120]])
+            if fb.get("input_type"):
+                fb_items.append(["Tipo", str(fb.get("input_type"))[:40]])
+            if fb.get("session"):
+                fb_items.append(["Sesion", str(fb.get("session"))[:40]])
+            if fb.get("confidence"):
+                fb_items.append(["Confianza", str(fb.get("confidence"))[:20]])
+            if fb.get("display_name"):
+                fb_items.append(["Nombre", str(fb.get("display_name"))[:80]])
+            if fb.get("user_id"):
+                fb_items.append(["FB User ID", str(fb.get("user_id"))[:40]])
+            if fb.get("profile_url"):
+                fb_items.append(["Perfil", str(fb.get("profile_url"))[:150]])
+            signals = fb.get("evidence_signals") or []
+            if signals:
+                fb_items.append(["Evidencia", " | ".join(str(s) for s in signals[:4])[:150]])
+            if fb.get("profile_pic_cdn"):
+                fb_items.append(["Foto publica", str(fb.get("profile_pic_cdn"))[:150]])
+            if fb_items:
+                t = Table(fb_items, colWidths=[120, 380])
+                t.setStyle(TableStyle([
+                    ('FONTSIZE', (0, 0), (-1, -1), 9),
+                    ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+                    ('GRID', (0, 0), (-1, -1), 0.25, Color(0.7, 0.7, 0.7)),
+                ]))
+                story.append(t)
+                story.append(Spacer(1, 10))
 
         if "email_recon" in payload:
             recon = payload["email_recon"]
@@ -729,12 +759,16 @@ def generate_pdf_report(title: str, data: dict, input_text: str = "") -> bytes:
                 ])
             fb = socials.get("facebook") or {}
             if fb.get("found"):
-                fb_url = f"https://www.facebook.com/{fb.get('user_id')}" if fb.get("user_id") else f"https://www.facebook.com/{user.get('username', resolved_input).lstrip('@')}"
+                fb_url = fb.get("profile_url") or (
+                    f"https://www.facebook.com/{fb.get('user_id')}" if fb.get("user_id") else f"https://www.facebook.com/{user.get('username', resolved_input).lstrip('@')}"
+                )
                 fb_evidence = []
                 if fb.get("display_name"):
                     fb_evidence.append(str(fb.get("display_name"))[:40])
                 if fb.get("user_id"):
                     fb_evidence.append(f"ID {fb.get('user_id')}")
+                if fb.get("confidence"):
+                    fb_evidence.append(f"confianza {fb.get('confidence')}")
                 if fb.get("profile_pic_cdn") or (fb.get("recovery") or {}).get("profile_pic_url"):
                     fb_evidence.append("foto publica")
                 verified_socials.append([

@@ -447,10 +447,13 @@ async def fb_lookup(query: str) -> dict:
         "found":            False,
         "user_id":          None,
         "display_name":     None,
+        "profile_url":      None,
         "profile_pic_cdn":  None,
         "profile_pic_urls": [],
         "recovery":         None,
         "session":          "authenticated" if _has_fb_cookies() else "anonymous",
+        "confidence":       "low",
+        "evidence_signals": [],
         "notes":            [],
         "search_links":     {},
         "errors":           [],
@@ -472,6 +475,10 @@ async def fb_lookup(query: str) -> dict:
     else:
         out["input_type"] = "username"
     out["search_links"] = _build_manual_search_links(query, out["input_type"])
+    if out["input_type"] == "username":
+        out["profile_url"] = f"https://www.facebook.com/{query}"
+    elif out["input_type"] == "user_id" and out.get("user_id"):
+        out["profile_url"] = f"https://www.facebook.com/{out['user_id']}"
 
     # 1) username o user_id → resolver perfil (ID + foto CDN + nombre)
     if out["input_type"] in ("username", "user_id"):
@@ -481,6 +488,8 @@ async def fb_lookup(query: str) -> dict:
         if resolved.get("user_id"):
             out["user_id"] = resolved["user_id"]
             out["found"]   = True
+            if out["input_type"] == "user_id":
+                out["profile_url"] = f"https://www.facebook.com/{resolved['user_id']}"
         if resolved.get("display_name"):
             out["display_name"] = resolved["display_name"]
         if resolved.get("profile_pic"):
@@ -516,6 +525,8 @@ async def fb_lookup(query: str) -> dict:
     if out["user_id"]:
         out["profile_pic_urls"] = fb_profile_picture_urls(out["user_id"])
         out["found"] = True
+        if not out.get("profile_url"):
+            out["profile_url"] = f"https://www.facebook.com/{out['user_id']}"
 
     if not out["found"] and out["input_type"] in ("phone", "email"):
         out["notes"].append(
@@ -524,5 +535,31 @@ async def fb_lookup(query: str) -> dict:
         out["notes"].append(
             "Este resultado no demuestra que la cuenta no exista; solo indica que Facebook no devolvió datos públicos reutilizables al bot."
         )
+
+    evidence_signals: list[str] = []
+    if out.get("display_name"):
+        evidence_signals.append("nombre público")
+    if out.get("user_id"):
+        evidence_signals.append("user ID numérico")
+    if out.get("profile_pic_cdn"):
+        evidence_signals.append("foto pública CDN")
+    if (out.get("recovery") or {}).get("profile_pic_url"):
+        evidence_signals.append("foto visible en recovery HTML")
+    if out.get("profile_url"):
+        evidence_signals.append("URL de perfil verificable")
+
+    if out.get("found"):
+        if out.get("user_id") and out.get("profile_pic_cdn"):
+            out["confidence"] = "high"
+        elif out.get("user_id") or out.get("display_name"):
+            out["confidence"] = "medium"
+        else:
+            out["confidence"] = "low"
+
+    deduped: list[str] = []
+    for signal in evidence_signals:
+        if signal not in deduped:
+            deduped.append(signal)
+    out["evidence_signals"] = deduped
 
     return out
