@@ -181,7 +181,7 @@ def _extract_display_name(html: str) -> str | None:
             if low and not any(
                 g in low for g in (
                     "facebook", "log in", "iniciar sesión", "inicia sesión",
-                    "entrar", "página no", "content not found",
+                    "entrar", "página no", "content not found", "error",
                 )
             ):
                 return name.replace("&amp;", "&")
@@ -209,6 +209,54 @@ def _build_manual_search_links(query: str, input_type: str) -> dict:
             + urllib.parse.quote_plus(f'site:facebook.com "{text}" OR "{local_part}"')
         )
     return links
+
+
+def _normalize_fb_input(raw_query: str) -> tuple[str, str, str | None]:
+    """
+    Normaliza input de Facebook para evitar tratar URLs completas como username.
+    Devuelve: (query_normalizado, input_type, profile_url_canonica)
+    """
+    text = (raw_query or "").strip()
+    if not text:
+        return "", "unknown", None
+
+    if EMAIL_RE.match(text):
+        return text, "email", None
+    if re.match(r"^\+\d[\d\s\-]{6,}$", text):
+        return text, "phone", None
+    if re.match(r"^\d{8,17}$", text):
+        return text, "user_id", f"https://www.facebook.com/profile.php?id={text}"
+
+    url_id = re.search(
+        r'(?:https?://)?(?:www\.|m\.|mbasic\.)?(?:facebook|fb)\.com/(?:profile\.php\?id=)?(\d{8,17})',
+        text,
+        re.IGNORECASE,
+    )
+    if not url_id:
+        url_id = re.search(
+            r'(?:https?://)?(?:www\.|m\.|mbasic\.)?(?:facebook|fb)\.com/people/[^/]+/(\d{8,17})',
+            text,
+            re.IGNORECASE,
+        )
+    if url_id:
+        user_id = url_id.group(1)
+        return user_id, "user_id", f"https://www.facebook.com/profile.php?id={user_id}"
+
+    clean_text = text.split("?", 1)[0].rstrip("/")
+    url_user = re.search(
+        r'(?:https?://)?(?:www\.|m\.|mbasic\.)?(?:facebook|fb)\.com/([A-Za-z0-9.\-]+)$',
+        clean_text,
+        re.IGNORECASE,
+    )
+    if url_user:
+        username = url_user.group(1).lstrip("@")
+        if username.lower() not in {
+            "profile.php", "people", "search", "login", "recover", "groups",
+            "watch", "marketplace", "messages",
+        }:
+            return username, "username", f"https://www.facebook.com/{username}"
+
+    return text.lstrip("@"), "username", f"https://www.facebook.com/{text.lstrip('@')}"
 
 
 # ── Conversión username/ID → datos públicos del perfil (findmyfbid) ───────────
@@ -459,26 +507,20 @@ async def fb_lookup(query: str) -> dict:
         "errors":           [],
     }
 
-    query = (query or "").strip().lstrip("@")
+    raw_query = (query or "").strip()
+    if not raw_query:
+        out["errors"].append("Input vacío")
+        return out
+    query, normalized_type, profile_url = _normalize_fb_input(raw_query)
     if not query:
         out["errors"].append("Input vacío")
         return out
 
-    # Detectar tipo de input. Orden importa.
-    if EMAIL_RE.match(query):
-        out["input_type"] = "email"
-    elif re.match(r"^\d{8,17}$", query):
-        out["input_type"] = "user_id"
+    out["input_type"] = normalized_type
+    if normalized_type == "user_id":
         out["user_id"] = query
-    elif re.match(r"^\+\d[\d\s\-]{6,}$", query):
-        out["input_type"] = "phone"
-    else:
-        out["input_type"] = "username"
     out["search_links"] = _build_manual_search_links(query, out["input_type"])
-    if out["input_type"] == "username":
-        out["profile_url"] = f"https://www.facebook.com/{query}"
-    elif out["input_type"] == "user_id" and out.get("user_id"):
-        out["profile_url"] = f"https://www.facebook.com/{out['user_id']}"
+    out["profile_url"] = profile_url
 
     # 1) username o user_id → resolver perfil (ID + foto CDN + nombre)
     if out["input_type"] in ("username", "user_id"):
@@ -489,7 +531,7 @@ async def fb_lookup(query: str) -> dict:
             out["user_id"] = resolved["user_id"]
             out["found"]   = True
             if out["input_type"] == "user_id":
-                out["profile_url"] = f"https://www.facebook.com/{resolved['user_id']}"
+                out["profile_url"] = f"https://www.facebook.com/profile.php?id={resolved['user_id']}"
         if resolved.get("display_name"):
             out["display_name"] = resolved["display_name"]
         if resolved.get("profile_pic"):
@@ -526,7 +568,7 @@ async def fb_lookup(query: str) -> dict:
         out["profile_pic_urls"] = fb_profile_picture_urls(out["user_id"])
         out["found"] = True
         if not out.get("profile_url"):
-            out["profile_url"] = f"https://www.facebook.com/{out['user_id']}"
+            out["profile_url"] = f"https://www.facebook.com/profile.php?id={out['user_id']}"
 
     if not out["found"] and out["input_type"] in ("phone", "email"):
         out["notes"].append(
