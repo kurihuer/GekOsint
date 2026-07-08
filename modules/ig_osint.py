@@ -427,6 +427,13 @@ async def ig_lookup(username: str) -> dict:
     if not user_doesnt_exist:
         await asyncio.sleep(IG_INTER_REQUEST_WAIT)
         recovery = await get_recovery_hints(username)
+        if out["found"] and isinstance(recovery, dict):
+            rec_error = str(recovery.get("error") or "")
+            if "no existe" in rec_error.lower():
+                recovery["error"] = (
+                    "Recovery no disponible para esta cuenta desde este flujo. "
+                    "El perfil sí fue confirmado por Instagram."
+                )
         out["recovery"] = recovery
         # Si recovery encontró hints, marcamos como "found" aunque
         # Instaloader haya fallado (caso anonymous bloqueado)
