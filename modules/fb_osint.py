@@ -357,8 +357,6 @@ async def resolve_fb_profile(identifier: str) -> dict:
         path_variants = [ident]
 
     pic_fallback_tried = False
-
-    # URLs: www (desktop, suele traer og:image) primero, luego m y mbasic.
     candidate_urls = []
     for p in path_variants:
         candidate_urls += [
@@ -367,6 +365,98 @@ async def resolve_fb_profile(identifier: str) -> dict:
             f"https://mbasic.facebook.com/{p}",
         ]
 
+    async def _try_candidates(client: httpx.AsyncClient, use_cookies: bool) -> None:
+        nonlocal pic_fallback_tried
+        for url in candidate_urls:
+            ua = UA_DESKTOP if "www.facebook" in url else UA_MOBILE
+            try:
+                r = await client.get(
+                    url,
+                    headers={
+                        "User-Agent": ua,
+                        "Accept": "text/html,application/xhtml+xml",
+                        "Accept-Language": "en-US,en;q=0.9",
+                    },
+                )
+            except Exception as e:
+                logger.debug(f"resolve_fb_profile GET {url}: {e}")
+                continue
+
+            if r.status_code != 200:
+                logger.debug(f"resolve_fb_profile: {url} → HTTP {r.status_code}")
+                continue
+
+            html = r.text or ""
+            final_url = str(getattr(r, "url", "") or "")
+            if final_url and not out["user_id"]:
+                fm = re.search(r'(?:profile\.php\?id=)(\d{8,17})', final_url)
+                if fm:
+                    out["user_id"] = fm.group(1)
+
+            if not out["user_id"]:
+                for pat in id_patterns:
+                    mm = re.search(pat, html)
+                    if mm:
+                        out["user_id"] = mm.group(1)
+                        break
+
+            pic = _extract_profile_pic(html)
+            if pic and not out["profile_pic"]:
+                out["profile_pic"] = pic
+            name = _extract_display_name(html)
+            if name and not out["display_name"]:
+                out["display_name"] = name
+
+            if out.get("user_id") and not out.get("profile_pic") and not pic_fallback_tried:
+                pic_fallback_tried = True
+                try:
+                    pic_url = (
+                        "https://mbasic.facebook.com/profile/picture/view/"
+                        f"?profile_id={out['user_id']}"
+                    )
+                    rpic = await client.get(
+                        pic_url,
+                        headers={
+                            "User-Agent": UA_MOBILE,
+                            "Accept": "text/html,application/xhtml+xml",
+                            "Accept-Language": "en-US,en;q=0.9",
+                        },
+                    )
+                    if rpic.status_code == 200:
+                        pic2 = _extract_profile_pic(rpic.text or "")
+                        if pic2 and not out.get("profile_pic"):
+                            out["profile_pic"] = pic2
+                except Exception:
+                    pass
+
+            # #region debug-point A:resolve-candidate
+            _dbg_event(
+                "A",
+                "resolve_fb_profile candidate fetched",
+                {
+                    "url": url,
+                    "status": r.status_code,
+                    "len": len(html),
+                    "login_wall": any(
+                        k in (html.lower())
+                        for k in (
+                            "login.php", "m.facebook.com/login", "checkpoint", "password",
+                            "enter your password", "iniciar sesión", "inicia sesión",
+                        )
+                    ),
+                    "got_user_id": bool(out.get("user_id")),
+                    "got_name": bool(out.get("display_name")),
+                    "got_pic": bool(out.get("profile_pic")),
+                    "has_cookies": use_cookies,
+                    "has_proxy": bool(PROXY_URL) if use_cookies else False,
+                    "pic_fallback_tried": pic_fallback_tried,
+                },
+            )
+            # #endregion
+
+            if out["user_id"] and out["profile_pic"] and out["display_name"]:
+                return
+
     _proxy = {"proxy": PROXY_URL} if PROXY_URL else {}
     try:
         async with httpx.AsyncClient(
@@ -374,97 +464,17 @@ async def resolve_fb_profile(identifier: str) -> dict:
             cookies=_fb_cookies(),
             **_proxy,
         ) as client:
-            for url in candidate_urls:
-                ua = UA_DESKTOP if "www.facebook" in url else UA_MOBILE
-                try:
-                    r = await client.get(
-                        url,
-                        headers={
-                            "User-Agent":      ua,
-                            "Accept":          "text/html,application/xhtml+xml",
-                            "Accept-Language": "en-US,en;q=0.9",
-                        },
-                    )
-                except Exception as e:
-                    logger.debug(f"resolve_fb_profile GET {url}: {e}")
-                    continue
+            await _try_candidates(client, use_cookies=bool(_has_fb_cookies()))
 
-                if r.status_code != 200:
-                    logger.debug(f"resolve_fb_profile: {url} → HTTP {r.status_code}")
-                    continue
-
-                html = r.text or ""
-                final_url = str(getattr(r, "url", "") or "")
-                if final_url and not out["user_id"]:
-                    fm = re.search(r'(?:profile\.php\?id=)(\d{8,17})', final_url)
-                    if fm:
-                        out["user_id"] = fm.group(1)
-
-                if not out["user_id"]:
-                    for pat in id_patterns:
-                        mm = re.search(pat, html)
-                        if mm:
-                            out["user_id"] = mm.group(1)
-                            break
-
-                pic = _extract_profile_pic(html)
-                if pic and not out["profile_pic"]:
-                    out["profile_pic"] = pic
-                name = _extract_display_name(html)
-                if name and not out["display_name"]:
-                    out["display_name"] = name
-
-                if out.get("user_id") and not out.get("profile_pic") and not pic_fallback_tried:
-                    pic_fallback_tried = True
-                    try:
-                        pic_url = (
-                            "https://mbasic.facebook.com/profile/picture/view/"
-                            f"?profile_id={out['user_id']}"
-                        )
-                        rpic = await client.get(
-                            pic_url,
-                            headers={
-                                "User-Agent":      UA_MOBILE,
-                                "Accept":          "text/html,application/xhtml+xml",
-                                "Accept-Language": "en-US,en;q=0.9",
-                            },
-                        )
-                        if rpic.status_code == 200:
-                            pic2 = _extract_profile_pic(rpic.text or "")
-                            if pic2 and not out.get("profile_pic"):
-                                out["profile_pic"] = pic2
-                    except Exception:
-                        pass
-
-                # #region debug-point A:resolve-candidate
-                _dbg_event(
-                    "A",
-                    "resolve_fb_profile candidate fetched",
-                    {
-                        "url": url,
-                        "status": r.status_code,
-                        "len": len(html),
-                        "login_wall": any(
-                            k in (html.lower())
-                            for k in (
-                                "login.php", "m.facebook.com/login", "checkpoint", "password",
-                                "enter your password", "iniciar sesión", "inicia sesión",
-                            )
-                        ),
-                        "got_user_id": bool(out.get("user_id")),
-                        "got_name": bool(out.get("display_name")),
-                        "got_pic": bool(out.get("profile_pic")),
-                        "has_cookies": bool(_has_fb_cookies()),
-                        "has_proxy": bool(PROXY_URL),
-                        "pic_fallback_tried": pic_fallback_tried,
-                    },
-                )
-                # #endregion
-
-                # Tenemos ID y foto → listo. Si falta la foto, seguimos probando
-                # las otras URLs (mbasic/m) por si una la expone.
-                if out["user_id"] and out["profile_pic"]:
-                    return out
+        if not out["display_name"] or not out["profile_pic"]:
+            # Fallback anónimo: a veces la sesión/cookies/proxy reciben HTML más
+            # pobre que el acceso público; reintentamos sin cookies ni proxy.
+            async with httpx.AsyncClient(
+                timeout=18.0,
+                follow_redirects=True,
+                trust_env=False,
+            ) as anon_client:
+                await _try_candidates(anon_client, use_cookies=False)
 
             if not out["user_id"] and not out["profile_pic"]:
                 out["error"] = (
