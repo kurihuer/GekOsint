@@ -1314,14 +1314,25 @@ def format_gmail_osint(data: dict) -> str:
     prof = data.get("profile") or {}
     pics = data.get("pictures") or {}
     yt = data.get("youtube") or {}
+    dom = data.get("domain") or {}
+    evidence = data.get("evidence_signals") or []
+    context = data.get("context_signals") or []
 
     # ── Status ───────────────────────────────────────────────────────────────
     out.append("✅ <b>Cuenta encontrada</b>")
     flags = []
-    if data.get("is_gmail"):  flags.append("Gmail")
-    elif data.get("is_google"): flags.append("Google Workspace")
+    if data.get("account_type"):
+        flags.append(str(data["account_type"]))
+    elif data.get("is_gmail"):
+        flags.append("Gmail")
+    elif data.get("is_google"):
+        flags.append("Google Workspace")
+    if data.get("confidence"):
+        flags.append(f"confianza {data['confidence']}")
     if flags:
         out.append(f"   ▪️ Tipo: {' · '.join(flags)}")
+    if evidence:
+        out.append(f"   ▪️ Evidencia: {' · '.join(evidence[:4])}")
     out.append("")
 
     # ── Recovery hints (la joya) ─────────────────────────────────────────────
@@ -1344,21 +1355,33 @@ def format_gmail_osint(data: dict) -> str:
                 out.append(f"   ▪️ Nombre: <b>{nm_safe}</b>")
         if prof.get("photo_url"):
             out.append(f"   ▪️ <a href='{prof['photo_url']}'>Foto de perfil (HD)</a>")
+        for org in (prof.get("organizations") or [])[:2]:
+            bits = [org.get("name")]
+            if org.get("title") and org.get("title") != org.get("name"):
+                bits.append(org["title"])
+            if org.get("type"):
+                bits.append(org["type"])
+            clean_bits = [str(x).replace("<", "&lt;").replace(">", "&gt;") for x in bits if x]
+            if clean_bits:
+                out.append(f"   ▪️ Organización: {' · '.join(clean_bits)}")
+        for loc in (prof.get("locations") or [])[:2]:
+            loc_safe = str(loc).replace("<", "&lt;").replace(">", "&gt;")
+            out.append(f"   ▪️ Ubicación: {loc_safe}")
         out.append("")
 
     # ── YouTube ──────────────────────────────────────────────────────────────
     if yt.get("found"):
-        out.append(f"📺 <b>Posibles canales YouTube</b> ({len(yt['channels'])})")
+        out.append(f"📺 <b>Canales YouTube por alias</b> ({len(yt['channels'])})")
         for ch in yt["channels"][:3]:
             out.append(f"   ▪️ <a href='{ch['url']}'>{ch['channel_id']}</a>")
-        out.append("   <i>(Búsqueda heurística por handle del email)</i>\n")
+        out.append("   <i>(Señal heurística: no confirma por sí sola que el canal pertenezca al correo)</i>\n")
 
     # ── Pictures (Gravatar) ──────────────────────────────────────────────────
     if pics.get("has_gravatar"):
-        out.append(f"🖼️ <a href='{pics['gravatar']}'>Gravatar disponible</a>\n")
+        out.append(f"🖼️ <a href='{pics['gravatar']}'>Gravatar disponible</a>")
+        out.append("   <i>Señal contextual: no confirma por sí sola una cuenta Google.</i>\n")
 
     # ── Análisis del dominio (útil para Workspace) ───────────────────────────
-    dom = data.get("domain") or {}
     if dom.get("mail_provider"):
         out.append("🌐 <b>Dominio del email</b>")
         out.append(f"   ▪️ Dominio: <code>{dom.get('domain', '?')}</code>")
@@ -1376,6 +1399,25 @@ def format_gmail_osint(data: dict) -> str:
         elif dmarc is False: sec.append("❌ sin DMARC")
         if sec:
             out.append(f"   ▪️ Seguridad: {' · '.join(sec)}")
+        out.append("")
+
+    pivots = data.get("manual_pivots") or []
+    if pivots:
+        out.append("🔎 <b>Pivotes recomendados</b>")
+        for pivot in pivots[:3]:
+            label = pivot.get("label") or "Pivote"
+            url = pivot.get("url")
+            desc = pivot.get("description") or ""
+            if url:
+                line = f"   ▪️ <a href='{url}'>{label}</a>"
+                if desc:
+                    line += f" — <i>{desc}</i>"
+                out.append(line)
+        out.append("")
+
+    if context:
+        out.append("📌 <b>Señales contextuales</b>")
+        out.append("   ▪️ " + " · ".join(context[:4]))
         out.append("")
 
     # Avisos no fatales

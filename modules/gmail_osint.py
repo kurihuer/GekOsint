@@ -316,8 +316,9 @@ async def get_youtube_channel(email: str) -> dict:
     Búsqueda heurística de canal de YouTube linkeado al email.
     Sin API key formal — usa el search público (más limitado).
     """
-    out = {"found": False, "channels": []}
+    out = {"found": False, "channels": [], "query": None}
     handle = email.split("@")[0]
+    out["query"] = handle
     _proxy = {"proxy": PROXY_URL} if PROXY_URL else {}
     try:
         async with httpx.AsyncClient(
@@ -363,6 +364,8 @@ async def get_google_profile_authenticated(email: str) -> dict:
         "gaia_id":    None,
         "names":      [],
         "photo_url":  None,
+        "organizations": [],
+        "locations":  [],
         "linked":     {},
         "error":      None,
     }
@@ -475,6 +478,23 @@ async def get_google_profile_authenticated(email: str) -> dict:
                         out["photo_url"] = re.sub(r"=s\d+", "=s400", url)
                         break
 
+                for org in (person.get("organization") or []):
+                    name = org.get("name") or org.get("title")
+                    if not name:
+                        continue
+                    entry = {
+                        "name": name,
+                        "title": org.get("title"),
+                        "type": org.get("type"),
+                    }
+                    if entry not in out["organizations"]:
+                        out["organizations"].append(entry)
+
+                for loc in (person.get("location") or []):
+                    value = loc.get("value") or loc.get("formattedAddress") or loc.get("name")
+                    if value and value not in out["locations"]:
+                        out["locations"].append(value)
+
                 out["found"] = True
                 return out
 
@@ -573,12 +593,17 @@ async def gmail_lookup(email: str) -> dict:
         "is_gmail":  False,
         "is_google": False,
         "found":     False,
+        "account_type": None,
         "recovery":  None,
         "profile":   None,
         "youtube":   None,
         "pictures":  None,
         "domain":    None,
         "session":   "anonymous",
+        "confidence": "low",
+        "evidence_signals": [],
+        "context_signals": [],
+        "manual_pivots": [],
         "errors":    [],
     }
 
@@ -593,6 +618,27 @@ async def gmail_lookup(email: str) -> dict:
     domain = email.split("@", 1)[-1]
     out["is_gmail"]  = domain in GMAIL_DOMAINS
     out["is_google"] = out["is_gmail"]
+    out["account_type"] = "Gmail" if out["is_gmail"] else "Correo externo"
+    local_part = email.split("@", 1)[0]
+    exact_q = httpx.QueryParams({"q": f'"{email}"'})
+    alias_q = httpx.QueryParams({"q": f'"{local_part}" "{domain}"'})
+    out["manual_pivots"] = [
+        {
+            "label": "Google exacto",
+            "url": f"https://www.google.com/search?{exact_q}",
+            "description": "Busca el correo exacto indexado en la web.",
+        },
+        {
+            "label": "Google alias + dominio",
+            "url": f"https://www.google.com/search?{alias_q}",
+            "description": "Cruza alias y dominio para pivotes manuales.",
+        },
+        {
+            "label": "YouTube por alias",
+            "url": f"https://www.youtube.com/results?search_query={local_part}&sp=EgIQAg%253D%253D",
+            "description": "Búsqueda manual de canales por alias del correo.",
+        },
+    ]
 
     if _has_google_cookies():
         out["session"] = "authenticated (cookies)"
@@ -621,6 +667,9 @@ async def gmail_lookup(email: str) -> dict:
     # Si el dominio es Workspace, también es cuenta Google
     if domain_intel.get("is_workspace"):
         out["is_google"] = True
+        out["account_type"] = "Google Workspace"
+    elif out["is_gmail"]:
+        out["account_type"] = "Gmail"
 
     # Errores: solo agregar el de profile si NO obtuvimos datos por otra vía.
     # El People API rompe seguido y no vale la pena alarmar al usuario si
@@ -636,5 +685,40 @@ async def gmail_lookup(email: str) -> dict:
     )
     if profile.get("error") and profile["error"] != "no auth" and not has_useful_data:
         out["errors"].append(f"Profile: {profile['error']}")
+
+    evidence_signals: list[str] = []
+    context_signals: list[str] = []
+
+    if recovery.get("obfuscated_phone"):
+        evidence_signals.append("hint de teléfono")
+    if recovery.get("obfuscated_email"):
+        evidence_signals.append("hint de email recovery")
+    if profile.get("gaia_id"):
+        evidence_signals.append("Google ID")
+    if profile.get("names"):
+        evidence_signals.append("nombre público")
+    if profile.get("photo_url"):
+        evidence_signals.append("foto de perfil Google")
+    if domain_intel.get("is_workspace"):
+        evidence_signals.append("Google Workspace confirmado por MX")
+
+    if pictures.get("has_gravatar"):
+        context_signals.append("gravatar")
+    if youtube.get("found"):
+        context_signals.append("canales YouTube por alias")
+    if domain_intel.get("mail_provider") and not domain_intel.get("is_workspace"):
+        context_signals.append(f"proveedor {domain_intel.get('mail_provider')}")
+    if profile.get("error") == "no auth":
+        context_signals.append("People API sin cookies")
+
+    out["evidence_signals"] = evidence_signals
+    out["context_signals"] = context_signals
+
+    if profile.get("found") or recovery.get("obfuscated_phone") or recovery.get("obfuscated_email"):
+        out["confidence"] = "high"
+    elif recovery.get("exists") or domain_intel.get("is_workspace"):
+        out["confidence"] = "medium"
+    elif pictures.get("has_gravatar") or youtube.get("found"):
+        out["confidence"] = "low"
 
     return out

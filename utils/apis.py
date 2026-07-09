@@ -661,7 +661,117 @@ def generate_pdf_report(title: str, data: dict, input_text: str = "") -> bytes:
             add_section("📧 EMAIL ANALYSIS", payload["email_analysis"])
         
         if "gmail_osint" in payload:
-            add_section("📧 GMAIL / GOOGLE OSINT", payload["gmail_osint"])
+            gmail = payload["gmail_osint"] or {}
+            story.append(Paragraph("📧 GMAIL / GOOGLE OSINT", header_style))
+            gmail_items = []
+            if gmail.get("input"):
+                gmail_items.append(["Email", str(gmail.get("input"))[:120]])
+            if gmail.get("session"):
+                gmail_items.append(["Sesion", str(gmail.get("session"))[:60]])
+            if gmail.get("account_type"):
+                gmail_items.append(["Tipo", str(gmail.get("account_type"))[:60]])
+            if gmail.get("confidence"):
+                gmail_items.append(["Confianza", str(gmail.get("confidence"))[:20]])
+            evidence = gmail.get("evidence_signals") or []
+            if evidence:
+                gmail_items.append(["Evidencia", " | ".join(evidence[:4])])
+            if gmail_items:
+                t = Table(gmail_items, colWidths=[120, 380])
+                t.setStyle(TableStyle([
+                    ('FONTSIZE', (0, 0), (-1, -1), 9),
+                    ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+                    ('GRID', (0, 0), (-1, -1), 0.25, Color(0.7, 0.7, 0.7)),
+                ]))
+                story.append(t)
+                story.append(Spacer(1, 8))
+
+            rec = gmail.get("recovery") or {}
+            rec_items = []
+            if rec.get("obfuscated_phone"):
+                rec_items.append(["Telefono hint", rec.get("obfuscated_phone")])
+            if rec.get("obfuscated_email"):
+                rec_items.append(["Email hint", rec.get("obfuscated_email")])
+            if rec_items:
+                story.append(Paragraph("Recovery hints", section_style))
+                t = Table(rec_items, colWidths=[120, 380])
+                t.setStyle(TableStyle([
+                    ('FONTSIZE', (0, 0), (-1, -1), 9),
+                    ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+                    ('GRID', (0, 0), (-1, -1), 0.25, Color(0.7, 0.7, 0.7)),
+                ]))
+                story.append(t)
+                story.append(Spacer(1, 8))
+
+            prof = gmail.get("profile") or {}
+            prof_items = []
+            if prof.get("gaia_id"):
+                prof_items.append(["Google ID", str(prof.get("gaia_id"))[:80]])
+            if prof.get("names"):
+                prof_items.append(["Nombres", " | ".join([str(x)[:40] for x in prof.get("names", [])[:3]])])
+            if prof.get("photo_url"):
+                prof_items.append(["Foto", str(prof.get("photo_url"))[:140]])
+            if prof.get("organizations"):
+                orgs = []
+                for org in prof.get("organizations", [])[:2]:
+                    bits = [org.get("name"), org.get("title")]
+                    orgs.append(" | ".join([str(x)[:30] for x in bits if x]))
+                if orgs:
+                    prof_items.append(["Organizacion", " ; ".join(orgs)])
+            if prof.get("locations"):
+                prof_items.append(["Ubicacion", " | ".join([str(x)[:40] for x in prof.get("locations", [])[:2]])])
+            if prof_items:
+                story.append(Paragraph("Perfil Google", section_style))
+                t = Table(prof_items, colWidths=[120, 380])
+                t.setStyle(TableStyle([
+                    ('FONTSIZE', (0, 0), (-1, -1), 9),
+                    ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+                    ('GRID', (0, 0), (-1, -1), 0.25, Color(0.7, 0.7, 0.7)),
+                ]))
+                story.append(t)
+                story.append(Spacer(1, 8))
+
+            dom = gmail.get("domain") or {}
+            dom_items = []
+            if dom.get("domain"):
+                dom_items.append(["Dominio", str(dom.get("domain"))[:80]])
+            if dom.get("mail_provider"):
+                dom_items.append(["Proveedor", str(dom.get("mail_provider"))[:80]])
+            if dom.get("mx_records"):
+                dom_items.append(["MX", ", ".join([str(x)[:40] for x in dom.get("mx_records", [])[:2]])])
+            sec_bits = []
+            if dom.get("has_spf") is True:
+                sec_bits.append("SPF")
+            elif dom.get("has_spf") is False:
+                sec_bits.append("sin SPF")
+            if dom.get("has_dmarc") is True:
+                sec_bits.append("DMARC")
+            elif dom.get("has_dmarc") is False:
+                sec_bits.append("sin DMARC")
+            if sec_bits:
+                dom_items.append(["Seguridad", " | ".join(sec_bits)])
+            if dom_items:
+                story.append(Paragraph("Dominio", section_style))
+                t = Table(dom_items, colWidths=[120, 380])
+                t.setStyle(TableStyle([
+                    ('FONTSIZE', (0, 0), (-1, -1), 9),
+                    ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+                    ('GRID', (0, 0), (-1, -1), 0.25, Color(0.7, 0.7, 0.7)),
+                ]))
+                story.append(t)
+                story.append(Spacer(1, 8))
+
+            pivots = gmail.get("manual_pivots") or []
+            if pivots:
+                story.append(Paragraph("Pivotes recomendados", section_style))
+                for pivot in pivots[:3]:
+                    label = pivot.get("label", "Pivote")
+                    url = pivot.get("url", "")
+                    desc = pivot.get("description", "")
+                    line = f"• {label}: {url}"
+                    if desc:
+                        line += f" ({desc})"
+                    story.append(Paragraph(line, body_style))
+                story.append(Spacer(1, 10))
 
         if "fb_osint" in payload:
             fb = payload["fb_osint"] or {}
