@@ -55,6 +55,21 @@ NOISE_KEY_TOKENS = (
     "breach", "provider", "metadata", "gravatar", "dns", "abuse", "blacklist",
 )
 
+NOISE_EXACT_KEYS = {
+    "links",
+    "source_links",
+    "emailrep",
+    "hunter",
+    "holehe",
+    "haveibeenpwned",
+    "intelx",
+    "dehashed",
+    "psbdmp",
+    "google_dork",
+    "mx_records",
+    "dns_security",
+}
+
 PERSONAL_URL_KEYS = (
     "bio", "profile", "website", "social", "avatar", "photo", "image", "input", "query", "url"
 )
@@ -94,6 +109,8 @@ def _normalize_phone(value: str) -> str | None:
 
 def _looks_like_noise_key(key: str) -> bool:
     low_key = (key or "").lower()
+    if low_key in NOISE_EXACT_KEYS:
+        return True
     return any(token in low_key for token in NOISE_KEY_TOKENS)
 
 
@@ -160,22 +177,25 @@ def _extract_from_scalar(key: str, value: str, target: dict[str, list[str]]) -> 
         return
 
     low_key = key.lower()
+    is_noise_key = _looks_like_noise_key(low_key) and not _looks_like_personal_url_key(low_key)
     emails_found = EMAIL_RE.findall(value)
     sanitized = value
     for email in emails_found:
         sanitized = sanitized.replace(email, " ")
 
-    for email in emails_found:
-        target["emails"].append(email)
+    if not is_noise_key:
+        for email in emails_found:
+            target["emails"].append(email)
 
-    if not any(token in low_key for token in ("date", "time", "created", "expired", "register")):
+    if not is_noise_key and not any(token in low_key for token in ("date", "time", "created", "expired", "register")):
         for phone in PHONE_RE.findall(value):
             normalized = _normalize_phone(phone)
             if normalized:
                 target["phones"].append(normalized)
 
-    for ip in IP_RE.findall(value):
-        target["ips"].append(ip)
+    if not is_noise_key:
+        for ip in IP_RE.findall(value):
+            target["ips"].append(ip)
 
     for url in URL_RE.findall(value):
         clean_url = _normalize_url(url)
@@ -196,17 +216,18 @@ def _extract_from_scalar(key: str, value: str, target: dict[str, list[str]]) -> 
         if "@" not in value and len(value) <= 40 and " " not in value and "/" not in value:
             target["usernames"].append(value.lstrip("@"))
 
-    if "name" in low_key and len(value) <= 80 and "http" not in value.lower():
+    if not is_noise_key and "name" in low_key and len(value) <= 80 and "http" not in value.lower():
         target["names"].append(value)
 
-    if any(token in low_key for token in ("city", "country", "region", "location", "timezone")):
+    if not is_noise_key and any(token in low_key for token in ("city", "country", "region", "location", "timezone")):
         target["locations"].append(value)
 
-    if any(token in low_key for token in ("coords", "coordinate", "lat", "lon", "map")):
+    if not is_noise_key and any(token in low_key for token in ("coords", "coordinate", "lat", "lon", "map")):
         if re.search(r"-?\d+\.\d+", value):
             target["coordinates"].append(value)
 
-    _add_platform_hints(target, value)
+    if not is_noise_key:
+        _add_platform_hints(target, value)
 
 
 def _walk_entities(node: Any, key: str, target: dict[str, list[str]]) -> None:
