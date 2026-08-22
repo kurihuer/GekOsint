@@ -95,6 +95,87 @@ def _fmt_date(ts) -> str:
     except Exception:
         return ""
 
+def _extract_og_meta(html: str) -> dict:
+    def _meta(prop: str) -> str:
+        m = re.search(
+            rf'<meta[^>]+property=["\']{re.escape(prop)}["\'][^>]+content=["\']([^"\']+)["\']',
+            html,
+            re.IGNORECASE,
+        )
+        return (m.group(1).strip() if m else "")
+
+    return {
+        "title": _meta("og:title"),
+        "description": _meta("og:description"),
+        "image": _meta("og:image"),
+        "url": _meta("og:url"),
+    }
+
+def _extract_from_sigi_state(username: str, html: str) -> dict | None:
+    m = re.search(
+        r'<script[^>]+id=["\']SIGI_STATE["\'][^>]*>(.*?)</script>',
+        html,
+        re.DOTALL,
+    )
+    if not m:
+        return None
+    try:
+        state = json.loads(m.group(1))
+    except Exception:
+        return None
+
+    user_module = state.get("UserModule") or {}
+    users = user_module.get("users") or {}
+    stats = user_module.get("stats") or {}
+
+    user = None
+    if username in users and isinstance(users.get(username), dict):
+        user = users.get(username)
+    else:
+        for _k, v in users.items():
+            if isinstance(v, dict) and v.get("uniqueId") == username:
+                user = v
+                break
+
+    if not user:
+        return None
+
+    st = {}
+    uid = user.get("id")
+    if uid and isinstance(stats.get(uid), dict):
+        st = stats.get(uid) or {}
+    elif username in stats and isinstance(stats.get(username), dict):
+        st = stats.get(username) or {}
+
+    return {"user": user, "stats": st, "_source": "sigi_state"}
+
+def _extract_exposure(bio: str, bio_link: str | None, username: str) -> dict:
+    text = (bio or "")
+    out = {"emails": [], "phones": [], "urls": [], "handles": []}
+
+    emails = re.findall(r"[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}", text, re.IGNORECASE)
+    out["emails"] = sorted(set(emails))[:5]
+
+    phones = re.findall(r"(?:\+?\d[\d\s().-]{7,}\d)", text)
+    cleaned = []
+    for p in phones:
+        digits = re.sub(r"\D", "", p)
+        if 8 <= len(digits) <= 15:
+            cleaned.append(p.strip())
+    out["phones"] = sorted(set(cleaned))[:5]
+
+    urls = re.findall(r"(https?://[^\s<>{}]+)", text, re.IGNORECASE)
+    urls += [f"https://{u}" for u in re.findall(r"\bwww\.[^\s<>{}]+\b", text, re.IGNORECASE)]
+    if bio_link:
+        urls.append(bio_link)
+    out["urls"] = sorted(set(urls))[:6]
+
+    handles = re.findall(r"@([\w.]{2,30})", text)
+    handles = [h for h in handles if h.lower() != username.lower()]
+    out["handles"] = sorted(set(handles))[:6]
+
+    return out
+
 
 # ── Scraping principal (JSON embebido) ────────────────────────────────────────
 
@@ -117,6 +198,10 @@ async def _scrape_web(username: str, client: httpx.AsyncClient) -> dict | None:
         return None
 
     html = r.text
+
+    sigi = _extract_from_sigi_state(username, html)
+    if sigi:
+        return sigi
 
     # 1) Intentar con el JSON universal
     m = re.search(
@@ -173,6 +258,27 @@ async def _scrape_web(username: str, client: httpx.AsyncClient) -> dict | None:
                 "videoCount":    videos,
                 "diggCount":     _re_int(r'"diggCount"\s*:\s*(\d+)'),
             }
+        }
+
+    og = _extract_og_meta(html)
+    if og.get("title") or og.get("description") or og.get("image"):
+        nickname = og.get("title") or username
+        if " on TikTok" in nickname:
+            nickname = nickname.replace(" on TikTok", "").strip()
+        return {
+            "_source": "og_meta",
+            "user": {
+                "id":             "",
+                "uniqueId":       username,
+                "nickname":       nickname or username,
+                "signature":      og.get("description", "") or "",
+                "verified":       False,
+                "privateAccount": False,
+                "region":         "",
+                "createTime":     0,
+                "avatarLarger":   og.get("image", "") or "",
+            },
+            "stats": {},
         }
 
     # El perfil existe pero TikTok bloqueó la extracción
@@ -430,5 +536,14 @@ async def tiktok_lookup(raw_input: str) -> dict:
     bio_links = user.get("bioLink", {})
     if bio_links and bio_links.get("link"):
         result["bio_link"] = bio_links["link"]
+
+    try:
+        result["exposure"] = _extract_exposure(
+            result.get("bio") or "",
+            result.get("bio_link"),
+            username,
+        )
+    except Exception:
+        pass
 
     return result

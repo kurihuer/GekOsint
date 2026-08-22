@@ -9,6 +9,7 @@ load_dotenv()
 # ============================================
 BOT_TOKEN = os.getenv("GEKOSINT_TOKEN", "")
 LOG_LEVEL  = os.getenv("LOG_LEVEL", "INFO")
+STRICT_LINKS = os.getenv("STRICT_LINKS", "1").strip().lower() in ("1", "true", "yes", "y", "on")
 
 # ============================================
 # DIRECTORIOS

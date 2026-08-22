@@ -4,29 +4,60 @@ import asyncio
 import urllib.parse
 import httpx
 import os
+import re
 from config import PAGES_DIR
 from datetime import datetime
 from io import BytesIO
 
 logger = logging.getLogger(__name__)
 
-def generate_text_report(title, data_str):
+def generate_text_report(title, data_str, envelope=None):
     """Genera un reporte en texto plano formateado"""
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    clean_body = re.sub(r'<[^>]+>', '', data_str or "")
+
+    structured = ""
+    if envelope:
+        scores = envelope.get("scores") or {}
+        entities = envelope.get("entities") or {}
+        signals = envelope.get("signals") or []
+        recommendations = envelope.get("recommendations") or []
+        entity_lines = []
+        for key, values in entities.items():
+            if values:
+                entity_lines.append(f"- {key}: {', '.join(str(v) for v in values[:6])}")
+        signal_lines = [
+            f"- [{(sig.get('severity') or '').upper() or 'INFO'}] {sig.get('label')}: {sig.get('evidence')}"
+            for sig in signals[:8]
+        ]
+        recommendation_lines = [f"- {rec}" for rec in recommendations[:6]]
+        structured = (
+            f"Modulo: {envelope.get('module', 'N/A')}\n"
+            f"Consulta: {envelope.get('query', 'N/A')}\n"
+            f"Generado: {envelope.get('generated_at', now)}\n"
+            f"Resumen: {envelope.get('summary', 'N/A')}\n"
+            f"Exposicion: {scores.get('exposure', 0)}/100\n"
+            f"Confianza: {scores.get('confidence', 0)}/100\n"
+            f"Nivel: {scores.get('risk_level', 'BAJO')}\n\n"
+            f"ENTIDADES DETECTADAS\n"
+            f"{chr(10).join(entity_lines) if entity_lines else '- Sin entidades relevantes'}\n\n"
+            f"HALLAZGOS CLAVE\n"
+            f"{chr(10).join(signal_lines) if signal_lines else '- Sin hallazgos relevantes'}\n\n"
+            f"RECOMENDACIONES\n"
+            f"{chr(10).join(recommendation_lines) if recommendation_lines else '- Sin recomendaciones'}\n\n"
+        )
     report = (
         f"{'='*50}\n"
         f" GEKOSINT OSINT REPORT - {title}\n"
         f"{'='*50}\n"
         f"Fecha: {now}\n"
         f"{'='*50}\n\n"
-        f"{data_str}\n\n"
+        f"{structured}"
+        f"{clean_body}\n\n"
         f"{'='*50}\n"
         f" Fin del reporte. Uso ético únicamente.\n"
         f"{'='*50}\n"
     )
-    # Limpiar tags HTML para el reporte de texto
-    import re
-    report = re.sub(r'<[^>]+>', '', report)
     return report
 
 HEADERS = {
