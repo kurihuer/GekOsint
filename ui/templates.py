@@ -91,6 +91,7 @@ def render_intel_summary(envelope: dict | None) -> str:
 
     scores = envelope.get("scores") or {}
     entities = envelope.get("entities") or {}
+    samples = envelope.get("entity_samples") or {}
     signals = envelope.get("signals") or []
     recommendations = envelope.get("recommendations") or []
     summary = html.escape(envelope.get("summary", "Sin resumen"))
@@ -124,6 +125,24 @@ def render_intel_summary(envelope: dict | None) -> str:
             entity_bits.append(f"{label}: {len(values)}")
     if entity_bits:
         txt += f"🧩 <b>Entidades:</b> {' | '.join(entity_bits[:5])}\n"
+
+    sample_labels = {
+        "emails": "Correos",
+        "phones": "Telefonos",
+        "usernames": "Alias",
+        "domains": "Dominios",
+        "urls": "URLs",
+        "ips": "IPs",
+    }
+    sample_lines = []
+    for key in ("emails", "phones", "usernames", "domains", "urls", "ips"):
+        values = samples.get(key) or []
+        if values:
+            rendered = " | ".join(f"<code>{html.escape(str(v))}</code>" for v in values[:3])
+            sample_lines.append(f"• <b>{sample_labels[key]}:</b> {rendered}")
+    if sample_lines:
+        txt += render_section("MUESTRAS")
+        txt += "\n".join(sample_lines[:4]) + "\n"
 
     if signals:
         txt += render_section("HALLAZGOS CLAVE")

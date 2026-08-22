@@ -27,6 +27,41 @@ PLATFORM_HINTS = {
     "reddit": "Reddit",
 }
 
+NOISE_URL_HOSTS = {
+    "haveibeenpwned.com",
+    "intelx.io",
+    "dehashed.com",
+    "psbdmp.ws",
+    "securitytrails.com",
+    "who.is",
+    "censys.io",
+    "shodan.io",
+    "virustotal.com",
+    "abuseipdb.com",
+    "ipvoid.com",
+    "viewdns.info",
+    "google.com",
+    "maps.google.com",
+    "yandex.com",
+    "tineye.com",
+    "facecheck.id",
+    "pimeyes.com",
+    "search4faces.com",
+}
+
+NOISE_KEY_TOKENS = (
+    "osint", "source", "dork", "search", "map", "mx", "ns", "spf", "dmarc",
+    "whois", "registrar", "header", "server", "evidence", "links", "record",
+    "breach", "provider", "metadata", "gravatar", "dns", "abuse", "blacklist",
+)
+
+PERSONAL_URL_KEYS = (
+    "bio", "profile", "website", "social", "avatar", "photo", "image", "input", "query", "url"
+)
+
+DATE_LIKE_RE = re.compile(r"^\d{4}[-/]\d{2}[-/]\d{2}$")
+COMPACT_DATE_RE = re.compile(r"^(19|20)\d{6}$")
+
 
 def _dedupe(values: list[str], limit: int = 8) -> list[str]:
     seen = set()
@@ -46,10 +81,56 @@ def _dedupe(values: list[str], limit: int = 8) -> list[str]:
 
 
 def _normalize_phone(value: str) -> str | None:
+    raw = (value or "").strip()
+    if DATE_LIKE_RE.fullmatch(raw):
+        return None
     digits = re.sub(r"\D", "", value or "")
+    if COMPACT_DATE_RE.fullmatch(digits):
+        return None
     if 8 <= len(digits) <= 15:
         return digits
     return None
+
+
+def _looks_like_noise_key(key: str) -> bool:
+    low_key = (key or "").lower()
+    return any(token in low_key for token in NOISE_KEY_TOKENS)
+
+
+def _looks_like_personal_url_key(key: str) -> bool:
+    low_key = (key or "").lower()
+    return any(token in low_key for token in PERSONAL_URL_KEYS)
+
+
+def _normalize_url(url: str) -> str:
+    return (url or "").rstrip(").,;!?]}>\"'")
+
+
+def _extract_host(url: str) -> str:
+    clean = re.sub(r"^https?://", "", _normalize_url(url), flags=re.IGNORECASE)
+    return clean.split("/", 1)[0].split("?", 1)[0].lower()
+
+
+def _is_noise_url(url: str, key: str) -> bool:
+    host = _extract_host(url)
+    if not host:
+        return True
+    if host in NOISE_URL_HOSTS:
+        return True
+    if _looks_like_noise_key(key) and not _looks_like_personal_url_key(key):
+        return True
+    return False
+
+
+def _is_noise_domain(domain: str, key: str) -> bool:
+    low_domain = (domain or "").lower()
+    if low_domain in NOISE_URL_HOSTS:
+        return True
+    if low_domain.endswith(".google.com") or low_domain.endswith(".googleusercontent.com"):
+        return _looks_like_noise_key(key)
+    if _looks_like_noise_key(key) and not _looks_like_personal_url_key(key):
+        return True
+    return False
 
 
 def _entity_bucket() -> dict[str, list[str]]:
@@ -78,33 +159,41 @@ def _extract_from_scalar(key: str, value: str, target: dict[str, list[str]]) -> 
     if not value:
         return
 
-    for email in EMAIL_RE.findall(value):
+    low_key = key.lower()
+    emails_found = EMAIL_RE.findall(value)
+    sanitized = value
+    for email in emails_found:
+        sanitized = sanitized.replace(email, " ")
+
+    for email in emails_found:
         target["emails"].append(email)
 
-    for phone in PHONE_RE.findall(value):
-        normalized = _normalize_phone(phone)
-        if normalized:
-            target["phones"].append(normalized)
+    if not any(token in low_key for token in ("date", "time", "created", "expired", "register")):
+        for phone in PHONE_RE.findall(value):
+            normalized = _normalize_phone(phone)
+            if normalized:
+                target["phones"].append(normalized)
 
     for ip in IP_RE.findall(value):
         target["ips"].append(ip)
 
     for url in URL_RE.findall(value):
-        target["urls"].append(url)
-        _add_platform_hints(target, url)
+        clean_url = _normalize_url(url)
+        if not _is_noise_url(clean_url, low_key):
+            target["urls"].append(clean_url)
+            _add_platform_hints(target, clean_url)
 
-    for domain in DOMAIN_RE.findall(value):
-        if "@" not in domain and not IP_RE.fullmatch(domain):
+    for domain in DOMAIN_RE.findall(sanitized):
+        if "@" not in domain and not IP_RE.fullmatch(domain) and not _is_noise_domain(domain, low_key):
             target["domains"].append(domain)
             _add_platform_hints(target, domain)
 
-    for handle in HANDLE_RE.findall(value):
+    for handle in HANDLE_RE.findall(sanitized):
         if 2 <= len(handle) <= 40:
             target["usernames"].append(handle)
 
-    low_key = key.lower()
     if "user" in low_key or "handle" in low_key or "nickname" in low_key or "alias" in low_key:
-        if len(value) <= 40 and " " not in value and "/" not in value:
+        if "@" not in value and len(value) <= 40 and " " not in value and "/" not in value:
             target["usernames"].append(value.lstrip("@"))
 
     if "name" in low_key and len(value) <= 80 and "http" not in value.lower():
@@ -291,25 +380,24 @@ def _risk_level(score: int) -> str:
 
 def _entity_overview(entities: dict[str, list[str]]) -> list[str]:
     labels = {
-        "emails": "correo",
-        "phones": "telefono",
-        "ips": "IP",
-        "domains": "dominio",
-        "urls": "URL",
-        "usernames": "alias",
-        "names": "nombre",
-        "locations": "ubicacion",
-        "coordinates": "coordenada",
-        "platforms": "plataforma",
+        "emails": ("correo", "correos"),
+        "phones": ("telefono", "telefonos"),
+        "ips": ("IP", "IPs"),
+        "domains": ("dominio", "dominios"),
+        "urls": ("URL", "URLs"),
+        "usernames": ("alias", "alias"),
+        "names": ("nombre", "nombres"),
+        "locations": ("ubicacion", "ubicaciones"),
+        "coordinates": ("coordenada", "coordenadas"),
+        "platforms": ("plataforma", "plataformas"),
     }
     out = []
     for key, values in entities.items():
         if not values:
             continue
-        label = labels[key]
+        singular, plural = labels[key]
         count = len(values)
-        plural = "" if count == 1 else "s"
-        out.append(f"{count} {label}{plural}")
+        out.append(f"{count} {singular if count == 1 else plural}")
     return out[:5]
 
 
@@ -368,6 +456,11 @@ def build_intel_envelope(module_name: str, query: str, raw_data: dict[str, Any] 
             "risk_level": risk_level,
         },
         "entities": entities,
+        "entity_samples": {
+            key: values[:3]
+            for key, values in entities.items()
+            if values and key in {"emails", "phones", "domains", "urls", "usernames", "ips"}
+        },
         "signals": signals,
         "recommendations": _build_recommendations(entities, signals),
         "raw": data,
