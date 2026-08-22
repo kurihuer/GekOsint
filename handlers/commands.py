@@ -8,7 +8,7 @@ from ui.templates import (
     format_people_result, format_dns_result,
     format_github_recon, format_ig_osint,
     format_gmail_osint, format_fb_osint,
-    format_email_recon, format_tiktok_osint,
+    format_email_recon, format_tiktok_osint, render_intel_summary,
 )
 from modules.ip_lookup import get_ip_info
 from modules.phone_lookup import analyze_phone
@@ -30,6 +30,7 @@ from utils.access import load_authorized_users, add_user, remove_user, get_all_u
 from utils.rate_limit import check_rate_limit
 from utils.parse import extract_phone_and_target
 from utils.database import log_query, upsert_user, log_error, get_global_stats
+from utils.intel_pipeline import build_intel_envelope
 from config import BOT_TOKEN, logger, ADMIN_ID, ADMIN_IDS
 from datetime import datetime
 import re
@@ -103,6 +104,14 @@ async def check_rate(update: Update, user_id: int) -> bool:
         elif update.message:
             await update.message.reply_text(txt, parse_mode="HTML")
     return allowed
+
+
+def _finalize_osint_response(mode: str, query: str, raw_data: dict | None, rendered: str) -> tuple[str, dict]:
+    envelope = build_intel_envelope(mode, query, raw_data or {})
+    extra = render_intel_summary(envelope)
+    if extra:
+        rendered = f"{rendered}\n{extra}"
+    return rendered, envelope
 
 
 # ── /admin ────────────────────────────────────────────────────────────────────
@@ -329,11 +338,15 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Exportar reporte
     if data == "export_txt":
         last = context.user_data.get("last_result")
+        envelope = context.user_data.get("last_envelope")
         if not last:
             await query.answer("No hay datos para exportar.", show_alert=True)
             return
         await query.answer("Generando reporte…")
-        report = generate_text_report("OSINT Analysis", last)
+        title = "OSINT Analysis"
+        if envelope and envelope.get("module"):
+            title = str(envelope["module"]).replace("menu_", "").upper()
+        report = generate_text_report(title, last, envelope)
         from io import BytesIO
         bio = BytesIO(report.encode())
         bio.name = f"GekOsint_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
@@ -505,9 +518,12 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         response = None
+        raw_payload = None
+        query_text = text.strip()
 
         if mode == "menu_ip":
-            data = await asyncio.to_thread(get_ip_info, text.strip())
+            data = await asyncio.to_thread(get_ip_info, query_text)
+            raw_payload = data
             response = format_ip_result(data)
 
         elif mode == "menu_phone":
@@ -516,61 +532,73 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if target_token and "error" not in data:
                 data["ip_intel_target"] = target_token
                 data["ip_intel"] = await asyncio.to_thread(get_ip_info, target_token)
+            raw_payload = data
             response = format_phone_result_with_ip(data)
 
         elif mode == "menu_user":
-            found, telegram_data = await asyncio.to_thread(search_username, text.strip())
-            response = format_username_result(text.strip(), found, telegram_data)
+            found, telegram_data = await asyncio.to_thread(search_username, query_text)
+            raw_payload = {"found": found, "telegram_data": telegram_data}
+            response = format_username_result(query_text, found, telegram_data)
 
         elif mode == "menu_email":
-            data = await asyncio.to_thread(analyze_email, text.strip())
+            data = await asyncio.to_thread(analyze_email, query_text)
+            raw_payload = data
             response = format_email_result(data)
 
         elif mode == "menu_wa":
-            data = await asyncio.to_thread(analyze_whatsapp, text.strip())
+            data = await asyncio.to_thread(analyze_whatsapp, query_text)
+            raw_payload = data
             response = format_whatsapp_result(data)
 
         elif mode == "menu_dns":
-            data = await asyncio.to_thread(get_dns_info, text.strip())
+            data = await asyncio.to_thread(get_dns_info, query_text)
+            raw_payload = data
             response = format_dns_result(data)
 
         elif mode == "menu_people":
-            data = await asyncio.to_thread(search_people, text.strip())
+            data = await asyncio.to_thread(search_people, query_text)
+            raw_payload = data
             response = format_people_result(data)
 
         elif mode == "menu_github":
             # github_recon es async nativo (httpx) → await directo, sin to_thread
-            data = await github_recon(text.strip())
+            data = await github_recon(query_text)
+            raw_payload = data
             response = format_github_recon(data)
 
         elif mode == "menu_ig":
             # Rate limiter dedicado a IG (separado del global del bot)
             allowed, reason = check_ig_rate_limit(update.effective_user.id)
             if not allowed:
+                raw_payload = {"error": reason}
                 response = (
                     f"⏳ <b>IG OSINT — rate limit</b>\n\n"
                     f"{reason}\n\n"
                     f"<i>Esto protege la cuenta de sesión de bloqueos por IG.</i>"
                 )
             else:
-                data = await ig_lookup(text.strip())
+                data = await ig_lookup(query_text)
+                raw_payload = data
                 response = format_ig_osint(data)
 
         elif mode == "menu_gmail":
             allowed, reason = check_gmail_rate_limit(update.effective_user.id)
             if not allowed:
+                raw_payload = {"error": reason}
                 response = (
                     f"⏳ <b>Gmail OSINT — rate limit</b>\n\n"
                     f"{reason}\n\n"
                     f"<i>Anti-ban contra Google.</i>"
                 )
             else:
-                data = await gmail_lookup(text.strip())
+                data = await gmail_lookup(query_text)
+                raw_payload = data
                 response = format_gmail_osint(data)
 
         elif mode == "menu_fb":
             allowed, reason = check_fb_rate_limit(update.effective_user.id)
             if not allowed:
+                raw_payload = {"error": reason}
                 response = (
                     f"⏳ <b>FB OSINT — rate limit</b>\n\n"
                     f"{reason}\n\n"
@@ -578,27 +606,32 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     f"sesión se bloquee.</i>"
                 )
             else:
-                data = await fb_lookup(text.strip())
+                data = await fb_lookup(query_text)
+                raw_payload = data
                 response = format_fb_osint(data)
 
         elif mode == "menu_emailrecon":
             allowed, reason = check_email_recon_rate_limit(update.effective_user.id)
             if not allowed:
+                raw_payload = {"error": reason}
                 response = f"⏳ <b>Email Recon — rate limit</b>\n\n{reason}"
             else:
-                data = await email_recon(text.strip())
+                data = await email_recon(query_text)
+                raw_payload = data
                 response = format_email_recon(data)
 
         elif mode == "menu_tiktok":
             allowed, reason = check_tiktok_rate_limit(update.effective_user.id)
             if not allowed:
+                raw_payload = {"error": reason}
                 response = (
                     f"⏳ <b>TikTok OSINT — rate limit</b>\n\n"
                     f"{reason}\n\n"
                     f"<i>Rate limit para no sobrecargar la IP del servidor.</i>"
                 )
             else:
-                data = await tiktok_lookup(text.strip())
+                data = await tiktok_lookup(query_text)
+                raw_payload = data
                 response = format_tiktok_osint(data)
 
         elif mode == "menu_exif":
@@ -616,13 +649,16 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await msg.delete()
             return
 
+        response, envelope = _finalize_osint_response(mode, query_text, raw_payload, response)
+
         # Logging a DB
         try:
-            log_query(update.effective_user.id, mode, text.strip()[:100], success=True)
+            log_query(update.effective_user.id, mode, query_text[:100], success=True)
         except Exception:
             pass
 
         context.user_data["last_result"] = response
+        context.user_data["last_envelope"] = envelope
         context.user_data.pop("mode", None)
         await msg.edit_text(
             response, parse_mode="HTML",
@@ -705,6 +741,7 @@ async def document_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # ── Formatear resultado ───────────────────────────────────────────
         response = format_exif_result(data)
+        response, envelope = _finalize_osint_response("menu_exif", fname, data, response)
 
         # Logging DB
         try:
@@ -713,6 +750,7 @@ async def document_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
 
         context.user_data["last_result"] = response
+        context.user_data["last_envelope"] = envelope
         context.user_data.pop("mode", None)
         await msg.edit_text(
             response, parse_mode="HTML",
