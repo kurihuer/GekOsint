@@ -1,4 +1,4 @@
-# 🛡️ GekOsint v6.0
+# 🛡️ GekOsint v6.1
 
 Bot de Telegram para investigación OSINT (Open Source Intelligence). Modular, cloud-ready, con acceso controlado y rate limiting por usuario.
 
@@ -20,6 +20,13 @@ Bot de Telegram para investigación OSINT (Open Source Intelligence). Modular, c
 | 🌐 **Domain/DNS** | WHOIS, registros A/MX/NS, DNSSEC, SPF/DMARC, IP History |
 | 🛰️ **Geo Localización** | IP, coordenadas, Google Maps URLs, análisis WebRTC |
 | 📶 **WiFi Scanner** | Redes cercanas para triangulación |
+| 🐙 **GitHub Recon** | Perfil, repos, organizaciones, correos expuestos y actividad |
+| 📸 **Instagram OSINT** | Perfil, bio, seguidores, publicaciones (cookies de sesión opcionales) |
+| 👥 **Facebook OSINT** | Perfil público, recovery hints, foto y metadata de Pages |
+| ✉️ **Gmail/Google OSINT** | Nombre, foto, Gaia ID y servicios (cookies opcionales) |
+| 🎵 **TikTok OSINT** | Perfil, estadísticas, bio y verificación |
+| 📬 **Email Recon** | Brechas, reputación, alias y proveedor |
+| 🧠 **Universal Recon** | Ejecuta todos los módulos relevantes en paralelo y consolida el reporte |
 
 ---
 
@@ -68,6 +75,7 @@ python bot.py
 | `RATE_LIMIT_BURST` | ❌ | Rate limit | Consultas rápidas antes del cooldown (default: 3) |
 | `LOG_LEVEL` | ❌ | Bot | INFO / DEBUG / WARNING (default: INFO) |
 | `PUBLIC_URL` | ❌ | Tracker | URL pública del servidor (Railway, Render…) |
+| `WEBHOOK_SECRET` | ❌ | Seguridad | Secreto del webhook (`X-Telegram-Bot-Api-Secret-Token`). Si no se define, se deriva del token del bot |
 | `WEBHOOK_URL` | ❌ | Bot | URL para modo webhook en lugar de polling |
 | `GITHUB_TOKEN` | ❌ | Tracker | Scope `gist` — hosting de tracking pages |
 | `VERCEL_TOKEN` | ❌ | Tracker | Alternativa a GitHub para hosting |
@@ -96,6 +104,10 @@ python bot.py
 ---
 
 ## ☁️ Deploy en la nube (sin PC)
+
+### Mantener la instancia despierta (plan Free)
+
+El plan Free de Koyeb escala a cero tras ~65 minutos sin tráfico: el bot deja de responder hasta que alguien abre la URL. El repo incluye `.github/workflows/keepalive.yml`, que hace una petición cada 10 minutos a la URL pública y evita el deep sleep. No requiere configuración: se activa solo al estar en `main`.
 
 ### Railway (recomendado)
 1. Crea cuenta en [railway.app](https://railway.app)
@@ -205,6 +217,14 @@ Este bot es para **investigación ética y educativa**. El usuario es responsabl
 ---
 
 ## 📝 Changelog
+
+### v6.1
+- `utils/access.py`: **bug crítico** — la caché de autorizados partía de `_cache_ts = 0.0` y `time.monotonic()` es cercano a 0 en instancias recién arrancadas, así que durante el primer minuto la lista quedaba **vacía y se negaba el acceso a todos** (admins incluidos). Ahora se carga al primer uso.
+- `bot.py`: `secret_token` en el webhook — Telegram firma cada update con `X-Telegram-Bot-Api-Secret-Token`; las peticiones sin la cabecera correcta reciben **403** (antes cualquiera podía inyectar updates falsos).
+- `.github/workflows/keepalive.yml`: ping automático cada 10 minutos para que la instancia Free de Koyeb no entre en deep sleep.
+- `.gitignore`: ignora `*.db-journal`, `*.db-wal`, `*.db-shm` y `*.db.test`; `!.env.example` para que la plantilla no quede ignorada.
+- Limpieza: fuera `gekosint.db.test`, `gekosint.db-journal` y la plantilla vacía de `.trae/`.
+- `README.md`: módulos que faltaban (GitHub, Instagram, Facebook, Gmail, TikTok, Email Recon, Universal), `WEBHOOK_SECRET` y esta sección.
 
 ### v6.0
 - `config.py`: eliminados IDs hardcodeados — todo vía variables de entorno

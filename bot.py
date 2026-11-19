@@ -2,6 +2,7 @@
 """
 GekOsint v6.1 — Punto de entrada principal.
 """
+import hashlib
 import logging
 import sys
 import os
@@ -45,6 +46,15 @@ WEBHOOK_URL      = _RAW_WEBHOOK_URL.rstrip("/")
 PORT             = int(os.getenv("PORT", 8443))
 FILE_SERVER_PORT = int(os.getenv("FILE_SERVER_PORT", 8000))
 KEEP_ALIVE_URL   = PUBLIC_URL or os.getenv("KOYEB_PUBLIC_DOMAIN", "")
+
+# ── Secreto del webhook ───────────────────────────────────────────────────────
+# Telegram firma cada update con la cabecera X-Telegram-Bot-Api-Secret-Token.
+# Sin esto, cualquiera que conozca la URL puede inyectar updates falsos.
+# Si WEBHOOK_SECRET no está definido se deriva del token del bot: no hace falta
+# configurar nada extra y el valor no es adivinable desde fuera.
+WEBHOOK_SECRET = (os.getenv("WEBHOOK_SECRET", "") or "").strip()
+if not WEBHOOK_SECRET and BOT_TOKEN:
+    WEBHOOK_SECRET = hashlib.sha256(BOT_TOKEN.encode("utf-8")).hexdigest()[:48]
 
 
 def build_app():
@@ -115,11 +125,13 @@ def main():
     if use_webhook:
         logger.info(f"Modo Webhook en puerto {PORT}")
         print(f"[*] Modo: Webhook — {WEBHOOK_URL}")
+        print(f"[*]  secret_token: {'activo' if WEBHOOK_SECRET else 'DESACTIVADO'}")
         app.run_webhook(
             listen="0.0.0.0",
             port=PORT,
             url_path="webhook",
             webhook_url=f"{WEBHOOK_URL}/webhook",
+            secret_token=WEBHOOK_SECRET or None,
             drop_pending_updates=True,
         )
     else:

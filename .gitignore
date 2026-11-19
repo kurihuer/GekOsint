@@ -1,9 +1,16 @@
 # Variables de entorno
 .env
 .env.*
+# ...pero la plantilla sí se versiona
+!.env.example
 
 # Bases de datos
 *.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.db.bak
+*.db.test
 *.sqlite
 *.sqlite3
 
