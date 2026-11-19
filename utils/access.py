@@ -14,7 +14,12 @@ USERS_FILE = os.path.join(BASE_DIR, "authorized_users.json")
 
 # ── Caché en memoria ──────────────────────────────────────────────────────────
 _cache: set = set()
-_cache_ts: float = 0.0
+# None = "todavía sin cargar". No usar 0.0: en contenedores/micro-VM recién
+# arrancados time.monotonic() empieza cerca de 0, así que `monotonic() - 0.0`
+# no superaba el TTL de 60 s y la caché quedaba vacía, denegando el acceso a
+# TODOS los usuarios (incluidos los admins) durante el primer minuto de vida
+# de la instancia.
+_cache_ts: float | None = None
 _CACHE_TTL = 60.0   # segundos; relee el JSON a lo mucho 1 vez por minuto
 
 def _load_from_disk() -> set:
@@ -36,17 +41,18 @@ def _save_to_disk(users: set) -> bool:
 
 def _invalidate_cache():
     global _cache_ts
-    _cache_ts = 0.0
+    _cache_ts = None
 
 def get_all_users() -> set:
     """Retorna el conjunto completo de usuarios autorizados (con caché)."""
     global _cache, _cache_ts
-    if time.monotonic() - _cache_ts > _CACHE_TTL:
+    now = time.monotonic()
+    if _cache_ts is None or now - _cache_ts > _CACHE_TTL:
         _cache = _load_from_disk().union(INITIAL_USERS)
         if ADMIN_ID > 0:
             _cache.add(ADMIN_ID)
-        _cache_ts = time.monotonic()
-    return _cache
+        _cache_ts = now
+    return set(_cache)
 
 def load_authorized_users() -> set:
     return get_all_users()
